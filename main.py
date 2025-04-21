@@ -117,11 +117,14 @@ class MainWindow(QMainWindow):
         
         # 创建并设置模型选择器
         self.model_selector = ModelSelector(self.model_manager)
-        self.ui.modelSelector = self.model_selector
         
         # 将模型选择器添加到转录设置布局中
         transcribe_layout = self.ui.transcribe_group.layout()
-        transcribe_layout.insertWidget(1, self.model_selector)
+        if transcribe_layout:
+            transcribe_layout.insertWidget(1, self.model_selector)
+            self.ui.modelSelector = self.model_selector
+        else:
+            print("警告: 无法找到转录设置布局")
         
         # 连接模型选择器信号
         self.model_selector.modelSelected.connect(self.on_model_selected)
