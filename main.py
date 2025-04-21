@@ -823,8 +823,13 @@ class MainWindow(QMainWindow):
     
     def on_model_selected(self, model_name):
         """当用户选择不同的模型时调用"""
-        # 检查模型是否已下载
+        # 每次选择模型时重新检查模型状态
+        self.model_manager.check_all_models()
+        
+        # 获取最新的模型状态
         status = self.model_manager.get_model_status(model_name)
+        print(f"当前选择的模型: {model_name}, 状态: {status['status']}")
+        
         if status["status"] == "downloaded":
             self.update_ui_state()  # 更新UI状态，允许开始转录
         else:

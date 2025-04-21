@@ -45,6 +45,15 @@ class AudioAnalyzer:
         print(f"使用设备: {self.device}")
         print("======================\n")
         
+        # 繁简体转换器
+        try:
+            import opencc
+            self.converter = opencc.OpenCC('t2s')  # 繁体转简体
+            self.use_converter = True
+        except ImportError:
+            print("警告: 未安装opencc库，无法进行繁简体转换。请使用pip安装: pip install opencc-python-reimplemented")
+            self.use_converter = False
+        
         self.pipe = None
     
     def _ensure_model_loaded(self, chunk_length_s=10):
@@ -93,6 +102,7 @@ class AudioAnalyzer:
             
             # 配置生成参数
             generate_kwargs = {}
+            generate_kwargs["task"] = "transcribe"
             
             # 将界面语言转换为模型支持的标准语言代码
             language_mapping = {
@@ -113,7 +123,6 @@ class AudioAnalyzer:
                 # 在新版本的transformers中，language需要通过generate_kwargs参数传递
                 if language:  # 确保语言不为None
                     generate_kwargs["language"] = language
-                    generate_kwargs["task"] = "transcribe"
                     print(f"使用指定语言进行转录: {language}")
                     transcribe_params["generate_kwargs"] = generate_kwargs
             else:
@@ -124,6 +133,16 @@ class AudioAnalyzer:
             # 尝试转录
             result = self.pipe(audio_path, **transcribe_params)
             print(f"Transcription result: {result}")
+            
+            # 处理繁体转简体
+            if self.use_converter and (language == "chinese" or (language is None and "chunks" in result)):
+                if "text" in result:
+                    result["text"] = self._process_text_with_punctuation(result["text"])
+                if "chunks" in result:
+                    for chunk in result["chunks"]:
+                        if "text" in chunk:
+                            chunk["text"] = self._process_text_with_punctuation(chunk["text"])
+                print("已将繁体文字转换为简体")
             
             # 转换为标准格式
             segments = []
@@ -211,33 +230,53 @@ class AudioAnalyzer:
         return merged_chunks
         
     def _add_punctuation(self, text):
-        """尝试为文本添加适当的标点符号"""
-        # 已经有标点的不处理
-        if any(p in text for p in "，。！？,.!?"):
-            return text
-            
-        # 用空格分割成词组
-        words = text.split()
-        if not words:
-            return text
-            
-        # 重新组合文本，在自然段落处添加标点
-        result = ""
-        for i, word in enumerate(words):
-            result += word
-            # 在句子可能结束的地方添加标点
-            # 句子长度达到一定程度，或者是列表的最后一个词
-            if (i + 1) % 6 == 0 and i < len(words) - 1:
-                result += "，"
-            elif i < len(words) - 1:
-                result += " "
+        """添加标点符号，提高可读性
         
-        # 句末加句号
-        if not result.endswith(("。", ".", "?", "!", "？", "！")):
-            result += "。"
+        Args:
+            text: 需要处理的文本
             
-        return result
-
+        Returns:
+            添加或修正标点后的文本
+        """
+        import re
+        
+        # 如果文本为空，直接返回
+        if not text:
+            return text
+            
+        # 替换常见的错误标点形式
+        text = re.sub(r'([，。？！；：,.?!;:])\s+', r'\1', text)  # 移除标点后的空格
+        
+        # 检查文本末尾是否有标点，如果没有则添加
+        if not re.search(r'[，。？！；：,.?!;:]$', text):
+            # 根据文本句式决定添加的标点
+            if re.search(r'(什么|为何|怎么样|吗|呢|会不会)$', text):
+                text += '？'
+            elif re.search(r'(多好|太棒了|真是|太|好极了|真棒)$', text):
+                text += '！'
+            else:
+                text += '。'
+                
+        return text
+        
+    def _process_text_with_punctuation(self, text):
+        """处理文本，确保有正确的标点并进行繁简体转换
+        
+        Args:
+            text: 原始文本
+            
+        Returns:
+            处理后的文本
+        """
+        # 首先进行繁简体转换
+        if self.use_converter:
+            text = self.converter.convert(text)
+            
+        # 添加/修正标点
+        text = self._add_punctuation(text)
+        
+        return text
+    
     def find_sentence_breaks(self, transcription, max_interval=60, min_interval=10, preserve_sentences=True):
         """
         Find logical sentence breaks between min and max interval while preserving sentence integrity

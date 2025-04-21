@@ -113,7 +113,7 @@ class Ui_MainWindow(object):
         self.lblLanguage.setStyleSheet("color: #ddd;")
         
         self.comboLanguage = QComboBox()
-        self.comboLanguage.addItems(["自动检测", "中文", "英文", "日文", "韩文"])
+        self.comboLanguage.addItems(["中文", "英文", "日文", "韩文", "自动检测"])
         self.comboLanguage.setFixedWidth(150)
         self.comboLanguage.setStyleSheet("""
             QComboBox {
@@ -429,7 +429,7 @@ class Ui_MainWindow(object):
         # 分段表格
         self.tableSegments = QTableWidget()
         self.tableSegments.setColumnCount(5)  # 选择、起始时间、结束时间、时长、文本
-        self.tableSegments.setHorizontalHeaderLabels(["选择", "开始时间", "结束时间", "时长", "文本"])
+        self.tableSegments.setHorizontalHeaderLabels(["选择", "时间范围", "时长", "内容", "播放"])
         self.tableSegments.horizontalHeader().setStretchLastSection(True)
         self.tableSegments.setStyleSheet("""
             QTableWidget {
