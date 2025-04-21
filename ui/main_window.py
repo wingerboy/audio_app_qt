@@ -583,9 +583,32 @@ class Ui_MainWindow(object):
         self.lblStatus = QLabel("就绪")
         self.lblStatus.setStyleSheet("color: #ddd;")
         
+        # 系统信息按钮
+        self.btnSystemInfo = QPushButton("查看系统环境")
+        self.btnSystemInfo.setStyleSheet("""
+            QPushButton {
+                background-color: #444;
+                color: #ddd;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #555;
+            }
+        """)
+        self.btnSystemInfo.setFixedWidth(120)
+        
+        # 系统状态指示器
+        self.lblSystemStatus = QLabel()
+        self.lblSystemStatus.setStyleSheet("color: #aaa; font-size: 12px;")
+        self.lblSystemStatus.setText("系统状态: 加载中...")
+        
         # 状态栏
         status_layout = QHBoxLayout()
         status_layout.addWidget(self.lblStatus, 1)
+        status_layout.addWidget(self.lblSystemStatus)
+        status_layout.addWidget(self.btnSystemInfo)
         status_layout.addWidget(self.progressBar)
         
         main_layout.addLayout(status_layout)

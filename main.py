@@ -6,9 +6,11 @@ from PyQt5.QtGui import QIcon
 
 from ui.main_window import Ui_MainWindow
 from ui.model_selector import ModelSelector
+from ui.system_info_dialog import SystemInfoDialog
 from core.audio_analyzer import AudioAnalyzer
 from core.audio_processor import AudioProcessor
 from core.model_manager import ModelManager
+from core.system_info import SystemInfo
 
 class TranscriptionThread(QThread):
     """Thread for running transcription in background"""
@@ -108,6 +110,9 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
         
+        # 初始化系统信息检查器
+        self.system_info = SystemInfo()
+        
         # 初始化模型管理器
         self.model_manager = ModelManager()
         
@@ -129,6 +134,9 @@ class MainWindow(QMainWindow):
         # 连接模型选择器信号
         self.model_selector.modelSelected.connect(self.on_model_selected)
         self.model_selector.requestDownload.connect(self.download_model)
+        
+        # 更新系统状态摘要
+        self.update_system_status()
         
         # 初始状态
         self.audio_path = None
@@ -171,6 +179,9 @@ class MainWindow(QMainWindow):
         # 导出
         self.ui.btnExport.clicked.connect(self.export_selected_segments)
         self.ui.btnBatchExport.clicked.connect(self.batch_export_segments)
+        
+        # 系统信息
+        self.ui.btnSystemInfo.clicked.connect(self.show_system_info)
         
     def setup_ui_state(self):
         """初始化UI状态"""
@@ -849,7 +860,38 @@ class MainWindow(QMainWindow):
         # 下载完成后，更新UI状态
         if progress == 100:
             self.update_ui_state()
-
+    
+    def show_system_info(self):
+        """显示系统信息对话框"""
+        dialog = SystemInfoDialog(self.system_info, self)
+        dialog.exec_()
+        # 对话框关闭后刷新状态显示
+        self.update_system_status()
+        
+    def update_system_status(self):
+        """更新系统状态显示"""
+        # 获取关键状态
+        cuda_available = self.system_info.info['dependencies']['cuda_available']
+        ffmpeg_available = self.system_info.info['ffmpeg']['available']
+        
+        # 构建状态文本
+        status_text = "GPU: "
+        if cuda_available:
+            gpu_name = self.system_info.info['dependencies']['gpu_name']
+            status_text += f"<span style='color:#27ae60;'>✓</span> {gpu_name}"
+        else:
+            status_text += "<span style='color:#e74c3c;'>✗</span> 使用CPU"
+            
+        status_text += " | FFmpeg: "
+        if ffmpeg_available:
+            status_text += "<span style='color:#27ae60;'>✓</span> 已安装"
+        else:
+            status_text += "<span style='color:#e74c3c;'>✗</span> 未安装"
+        
+        # 更新状态标签
+        self.ui.lblSystemStatus.setText(status_text)
+        self.ui.lblSystemStatus.setTextFormat(Qt.RichText)
+    
 def main():
     app = QApplication(sys.argv)
     
