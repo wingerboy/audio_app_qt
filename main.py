@@ -1,16 +1,18 @@
 import sys
 import os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QTableWidgetItem, QCheckBox, QWidget, QHBoxLayout, QPushButton, QSlider, QSpinBox
-from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QTableWidgetItem, QCheckBox, QWidget, QHBoxLayout, QPushButton, QSlider, QSpinBox, QLabel, QHeaderView
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon
 
 from ui.main_window import Ui_MainWindow
 from ui.model_selector import ModelSelector
 from ui.system_info_dialog import SystemInfoDialog
+from ui.login_dialog import LoginDialog
 from core.audio_analyzer import AudioAnalyzer
 from core.audio_processor import AudioProcessor
 from core.model_manager import ModelManager
 from core.system_info import SystemInfo
+from core.session_manager import SessionManager
 
 class TranscriptionThread(QThread):
     """Thread for running transcription in background"""
@@ -18,17 +20,23 @@ class TranscriptionThread(QThread):
     result_signal = pyqtSignal(dict)
     error_signal = pyqtSignal(str)
     
-    def __init__(self, file_path, model_name, language, chunk_length):
+    def __init__(self, file_path, model_name, language, chunk_length, analyzer=None):
         super().__init__()
         self.file_path = file_path
         self.model_name = model_name
         self.language = language
         self.chunk_length = chunk_length
+        self.analyzer = analyzer
         
     def run(self):
         try:
-            self.progress_signal.emit("初始化转录模型...", 0)
-            analyzer = AudioAnalyzer(model_name=self.model_name)
+            if self.analyzer is None:
+                self.progress_signal.emit("初始化转录模型...", 0)
+                analyzer = AudioAnalyzer(model_name=self.model_name)
+            else:
+                analyzer = self.analyzer
+                self.progress_signal.emit("使用已加载的模型...", 10)
+            
             self.progress_signal.emit("开始转录音频...", 20)
             
             result = analyzer.transcribe(
@@ -116,6 +124,14 @@ class MainWindow(QMainWindow):
         # 初始化模型管理器
         self.model_manager = ModelManager()
         
+        # 初始化会话管理器
+        self.session_manager = SessionManager()
+        self.session_manager.sessionChanged.connect(self.on_session_changed)
+        
+        # 预加载的音频分析器
+        self.analyzer = None
+        self.current_model_name = None
+        
         # 设置UI
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
@@ -130,6 +146,21 @@ class MainWindow(QMainWindow):
             self.ui.modelSelector = self.model_selector
         else:
             print("警告: 无法找到转录设置布局")
+        
+        # 添加登录状态显示
+        self.login_status_layout = QHBoxLayout()
+        self.login_status_label = QLabel("未登录")
+        self.login_status_label.setStyleSheet("color: #e74c3c;")
+        self.login_button = QPushButton("登录")
+        self.login_button.setFixedWidth(60)
+        self.login_button.clicked.connect(self.show_login_dialog)
+        self.login_status_layout.addWidget(self.login_status_label)
+        self.login_status_layout.addWidget(self.login_button)
+        
+        # 将登录状态添加到状态栏区域
+        status_layout = self.ui.lblStatus.parentWidget().layout()
+        if status_layout:
+            status_layout.insertLayout(0, self.login_status_layout)
         
         # 连接模型选择器信号
         self.model_selector.modelSelected.connect(self.on_model_selected)
@@ -154,9 +185,97 @@ class MainWindow(QMainWindow):
         # 设置信号和槽
         self.setup_connections()
         
+        # 初始化显示计数
+        self.update_count_display()
+        
         # 更新UI状态
         self.setup_ui_state()
         self.update_step_indicator(1)
+        
+        # 登录对话框延迟显示，确保主窗口先显示
+        QTimer.singleShot(100, self.show_login_dialog)
+        
+    def on_session_changed(self, is_logged_in, status_message):
+        """当会话状态改变时更新UI"""
+        if is_logged_in:
+            self.login_status_label.setText(status_message)
+            self.login_status_label.setStyleSheet("color: #27ae60;")
+            self.login_button.setText("注销")
+            self.login_button.clicked.disconnect()
+            self.login_button.clicked.connect(self.logout)
+        else:
+            self.login_status_label.setText("未登录")
+            self.login_status_label.setStyleSheet("color: #e74c3c;")
+            self.login_button.setText("登录")
+            try:
+                self.login_button.clicked.disconnect()
+            except:
+                pass
+            self.login_button.clicked.connect(self.show_login_dialog)
+        
+        # 更新UI启用状态
+        self.update_ui_state()
+        
+    def show_login_dialog(self):
+        """显示登录对话框"""
+        # 创建登录对话框
+        dialog = LoginDialog(self)
+        
+        # 设置为模态对话框，确保用户必须先处理登录
+        dialog.setWindowModality(Qt.ApplicationModal)
+        
+        # 设置登录按钮点击事件
+        dialog.btnLogin.clicked.connect(lambda: self.handle_login(dialog))
+        
+        # 连接登录成功信号
+        dialog.loginSuccess.connect(self.on_login_success)
+        
+        # 显示对话框
+        dialog.exec_()
+        
+    def handle_login(self, dialog):
+        """处理登录请求"""
+        card_id = dialog.editCardId.text().strip()
+        card_key = dialog.editCardKey.text().strip()
+        
+        # 尝试登录
+        success, message = self.session_manager.login(card_id, card_key)
+        dialog.show_login_result(success, message)
+        
+        if success:
+            # 发出登录成功信号
+            dialog.loginSuccess.emit(
+                self.session_manager.session_token,
+                self.session_manager.user_type,
+                self.session_manager.expiry_date or ""
+            )
+            dialog.accept()  # 关闭对话框
+            # 更新UI
+            self.update_ui_state()
+    
+    def on_login_success(self, session_token, user_type, expiry_date):
+        """登录成功后的处理"""
+        # 显示欢迎信息
+        QMessageBox.information(
+            self,
+            "登录成功",
+            f"欢迎使用音频分割工具\n账户类型: {user_type}\n过期时间: {expiry_date}"
+        )
+        
+    def logout(self):
+        """注销当前会话"""
+        reply = QMessageBox.question(
+            self, 
+            "确认注销", 
+            "确定要注销当前会话吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.session_manager.logout()
+            # 显示登录对话框
+            self.show_login_dialog()
         
     def setup_connections(self):
         # 文件选择
@@ -170,6 +289,7 @@ class MainWindow(QMainWindow):
         self.ui.comboFilterType.currentIndexChanged.connect(self.apply_filter)
         self.ui.spinMinDuration.valueChanged.connect(self.on_duration_filter_changed)
         self.ui.spinMaxDuration.valueChanged.connect(self.on_duration_filter_changed)
+        self.ui.btnApplyFilter.clicked.connect(self.apply_all_filters)
         
         # 标签状态切换
         self.ui.radioAll.clicked.connect(lambda: self.show_segments_by_status("all"))
@@ -192,37 +312,160 @@ class MainWindow(QMainWindow):
         for step in [self.ui.step2Label, self.ui.step3Label, self.ui.step4Label]:
             step.setStyleSheet("background-color: #444; color: #999; border-radius: 10px;")
         
-        # 隐藏分段设置，直到转录完成
-        # self.ui.segment_group.hide()
-        
         # 禁用转录相关功能
         transcription_done = False
-        self.ui.btnTranscribe.setEnabled(transcription_done)
-        
-        # 禁用分段相关功能
-        segmentation_done = False
-        # self.ui.btnApplyFilter.setEnabled(segmentation_done)
-        
-        # 禁用过滤器
-        filter_enabled = segmentation_done
-        self.ui.comboFilterType.setEnabled(filter_enabled)
-        self.ui.editFilterKeyword.setEnabled(filter_enabled)
-        self.ui.spinMinDuration.setEnabled(filter_enabled)
-        self.ui.spinMaxDuration.setEnabled(filter_enabled)
-        # self.ui.btnApplyFilter.setEnabled(filter_enabled)
-        
-        # 单选按钮
-        self.ui.radioAll.setEnabled(filter_enabled)
-        self.ui.radioSelected.setEnabled(filter_enabled)
-        self.ui.radioUnselected.setEnabled(filter_enabled)
-        
-        # 默认选择"全部"
-        self.ui.radioAll.setChecked(True)
+        self.ui.btnTranscribe.setEnabled(False)
         
         # 禁用导出功能
         self.ui.btnExport.setEnabled(False)
         self.ui.btnBatchExport.setEnabled(False)
         
+        # 设置表格表头
+        header = self.ui.tableSegments.horizontalHeader()
+        header.setSectionsClickable(True)
+        
+        # 添加全选按钮和提示标签
+        if not hasattr(self, 'selection_control_widget'):
+            # 创建一个水平布局的Widget来容纳全选按钮和提示
+            self.selection_control_widget = QWidget()
+            selection_layout = QHBoxLayout(self.selection_control_widget)
+            selection_layout.setContentsMargins(5, 5, 5, 5)
+            
+            # 添加全选按钮
+            self.btn_select_all = QPushButton("全选")
+            self.btn_select_all.setFixedWidth(80)
+            self.btn_select_all.setStyleSheet("""
+                QPushButton {
+                    background-color: #3498db;
+                    color: white;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #2980b9;
+                }
+                QPushButton:pressed {
+                    background-color: #1f6aa5;
+                }
+            """)
+            self.btn_select_all.clicked.connect(self.toggle_select_all)
+            selection_layout.addWidget(self.btn_select_all)
+            
+            # 添加帮助提示文本
+            help_label = QLabel("点击可一键选择/取消选择所有行")
+            help_label.setStyleSheet("color: #999; padding-left: 10px;")
+            selection_layout.addWidget(help_label)
+            
+            # 添加弹性空间
+            selection_layout.addStretch(1)
+            
+            # 将控件添加到界面布局
+            segments_layout = self.ui.segments_group.layout()
+            segments_layout.insertWidget(1, self.selection_control_widget)
+        
+        # 修改表格样式，使行更清晰
+        self.ui.tableSegments.setStyleSheet("""
+            QTableWidget {
+                background-color: #222;
+                color: #ddd;
+                gridline-color: #444;
+                border: 1px solid #555;
+                alternate-background-color: #2a2a2a;
+            }
+            QTableWidget::item {
+                padding: 5px;
+                border-bottom: 1px solid #444;
+            }
+            QTableWidget::item:selected {
+                background-color: #345;
+            }
+            QHeaderView::section {
+                background-color: #333;
+                color: #ddd;
+                padding: 5px;
+                border: 1px solid #555;
+                font-weight: bold;
+            }
+            QTableWidget QCheckBox {
+                color: #ddd;
+            }
+        """)
+        
+        # 启用交替行颜色
+        self.ui.tableSegments.setAlternatingRowColors(True)
+        
+        # 设置固定行高
+        self.ui.tableSegments.verticalHeader().setDefaultSectionSize(40)
+        self.ui.tableSegments.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            
+        # 初始化列宽
+        table_width = self.ui.tableSegments.width()
+        self.ui.tableSegments.setColumnWidth(0, int(table_width * 0.05))
+        self.ui.tableSegments.setColumnWidth(1, int(table_width * 0.15))
+        self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.08))
+        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.05))
+        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.67))
+        
+    def toggle_select_all(self):
+        """切换全选/取消全选状态"""
+        if not self.segments or self.ui.tableSegments.rowCount() == 0:
+            return
+            
+        # 判断当前是否所有可见行都已选中
+        all_selected = True
+        visible_segments = []
+        
+        # 收集当前表格中显示的所有段落
+        for i in range(self.ui.tableSegments.rowCount()):
+            checkbox_widget = self.ui.tableSegments.cellWidget(i, 0)
+            if checkbox_widget:
+                checkbox = checkbox_widget.findChild(QCheckBox)
+                if checkbox:
+                    if not checkbox.isChecked():
+                        all_selected = False
+                    # 获取段落数据
+                    segment = None
+                    if self.ui.tableSegments.item(i, 3):
+                        segment = self.ui.tableSegments.item(i, 3).data(Qt.UserRole)
+                    if segment:
+                        visible_segments.append(segment)
+        
+        # 根据当前状态决定是全选还是取消全选
+        new_state = not all_selected
+        
+        # 批量更新选择状态
+        if new_state:
+            # 全选：添加所有可见段落
+            for segment in visible_segments:
+                if segment not in self.selected_segments:
+                    self.selected_segments.append(segment)
+            self.selected_count = len(self.selected_segments)
+            self.btn_select_all.setText("取消全选")
+        else:
+            # 取消全选：移除所有可见段落
+            for segment in visible_segments:
+                if segment in self.selected_segments:
+                    self.selected_segments.remove(segment)
+            self.selected_count = len(self.selected_segments)
+            self.btn_select_all.setText("全选")
+            
+        # 更新计数显示
+        self.update_count_display()
+        
+        # 更新UI显示
+        current_tab = "all"
+        if self.ui.radioSelected.isChecked():
+            current_tab = "selected"
+        elif self.ui.radioUnselected.isChecked():
+            current_tab = "unselected"
+        
+        # 暂时断开事件连接，避免触发大量单独事件
+        self.update_ui_state()
+        
+        # 重新显示分段，使复选框状态与实际选择状态同步
+        self.show_segments_by_status(current_tab)
+    
     def update_step_indicator(self, step):
         """更新步骤指示器状态"""
         # 步骤列表
@@ -249,67 +492,75 @@ class MainWindow(QMainWindow):
                 label.setStyleSheet(inactive_style)
     
     def update_ui_state(self):
-        # 根据当前状态更新UI元素的启用/禁用状态
+        """根据当前状态更新UI元素的启用/禁用状态"""
+        # 如果未登录，禁用所有功能
+        if not self.session_manager.is_logged_in:
+            # 不能直接访问centralwidget，需要禁用主要功能组件
+            self.ui.transcribe_group.setEnabled(False)
+            self.ui.segments_group.setEnabled(False)
+            self.ui.export_group.setEnabled(False)
+            self.ui.tableSegments.setEnabled(False)
+            self.ui.btnSelectFile.setEnabled(False)
+            return
+        else:
+            self.ui.transcribe_group.setEnabled(True)
+            self.ui.btnSelectFile.setEnabled(True)
         
         # 文件选择状态
-        file_selected = self.audio_path is not None
-        
-        # 转录状态
-        transcription_done = self.transcription is not None
-        
-        # 分段状态（现在直接从转录后获取）
-        segments_available = self.segments is not None and len(self.segments) > 0
-        
-        # 筛选后的分段状态
-        filtered_segments_available = self.filtered_segments is not None and len(self.filtered_segments) > 0
-        
-        # 转录按钮
+        file_selected = bool(self.audio_path) or bool(self.extracted_audio_path)
         self.ui.btnTranscribe.setEnabled(file_selected)
         
-        # 导出按钮
-        self.ui.btnExport.setEnabled(segments_available and len(self.selected_segments) > 0)
-        self.ui.btnBatchExport.setEnabled(segments_available and (
-            len(self.selected_segments) > 0 or 
-            (filtered_segments_available and len(self.filtered_segments) > 0)
-        ))
+        # 转录设置状态
+        self.ui.transcribe_group.setEnabled(file_selected)
         
-        # 过滤控件
-        filter_enabled = segments_available
-        self.ui.editFilterKeyword.setEnabled(filter_enabled)
-        self.ui.comboFilterType.setEnabled(filter_enabled)
-        self.ui.spinMinDuration.setEnabled(filter_enabled)
-        self.ui.spinMaxDuration.setEnabled(filter_enabled)
+        # 转录完成状态
+        transcription_done = self.transcription is not None
+        self.ui.segments_group.setEnabled(transcription_done)
+        self.ui.export_group.setEnabled(transcription_done and len(self.selected_segments) > 0)
         
-        # 单选按钮
-        self.ui.radioAll.setEnabled(filter_enabled)
-        self.ui.radioSelected.setEnabled(filter_enabled)
-        self.ui.radioUnselected.setEnabled(filter_enabled)
+        # 更新过滤器状态
+        self.ui.filter_group.setEnabled(transcription_done)
         
-        # 更新统计信息
-        if segments_available and self.segments:
-            self.ui.radioAll.setText(f"全部 ({self.total_segments}/{self.total_segments})")
-            self.ui.radioSelected.setText(f"已选择 ({self.selected_count}/{self.total_segments})")
-            self.ui.radioUnselected.setText(f"未选择 ({self.total_segments - self.selected_count}/{self.total_segments})")
+        # 更新分段表格状态
+        self.ui.tableSegments.setEnabled(transcription_done)
+        
+        # 更新导出状态
+        if transcription_done:
+            has_selected = len(self.selected_segments) > 0
+            self.ui.btnExport.setEnabled(has_selected)
+            
+            # 仅允许高级用户进行批量导出
+            allowed, _ = self.session_manager.validate_action("batch_process")
+            self.ui.btnBatchExport.setEnabled(has_selected and allowed)
+        else:
+            self.ui.btnExport.setEnabled(False)
+            self.ui.btnBatchExport.setEnabled(False)
     
     def select_file(self):
-        file_path, _ = QFileDialog.getOpenFileName(
-            self,
-            "选择音频或视频文件",
-            "",
-            "媒体文件 (*.mp3 *.wav *.mp4 *.avi *.mov *.mkv *.flac *.ogg *.m4a *.webm)"
-        )
-        
-        if file_path:
-            self.audio_path = file_path
-            self.ui.lblFilePath.setText(os.path.basename(file_path))
-            self.update_step_indicator(1)
+        """选择音频或视频文件"""
+        # 验证用户是否有权限执行此操作
+        allowed, reason = self.session_manager.validate_action("select_file")
+        if not allowed:
+            QMessageBox.warning(self, "操作受限", f"无法继续: {reason}")
+            return
             
-            # 如果是视频文件，需要提取音频
-            if os.path.splitext(file_path)[1].lower() in ['.mp4', '.avi', '.mov', '.mkv', '.webm']:
-                self.extract_audio(file_path)
-            else:
-                self.extracted_audio_path = file_path
-                self.update_ui_state()
+        file_dialog = QFileDialog()
+        file_dialog.setFileMode(QFileDialog.ExistingFile)
+        file_dialog.setNameFilter("媒体文件 (*.mp3 *.wav *.m4a *.mp4 *.mkv *.avi *.flac *.ogg *.aac *.wma *.mov)")
+        
+        if file_dialog.exec_():
+            selected_files = file_dialog.selectedFiles()
+            if selected_files:
+                file_path = selected_files[0]
+                self.ui.lblFilePath.setText(file_path)
+                
+                # 如果是视频文件，先提取音频
+                if file_path.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
+                    self.extract_audio(file_path)
+                else:
+                    self.audio_path = file_path
+                    self.update_step_indicator(2)
+                    self.update_ui_state()
     
     def extract_audio(self, file_path):
         # 禁用UI
@@ -328,44 +579,62 @@ class MainWindow(QMainWindow):
         self.setEnabled(True)
     
     def start_transcription(self):
-        if not self.extracted_audio_path:
-            self.show_error("没有有效的音频文件")
+        """开始转录音频"""
+        # 验证用户是否有权限执行此操作
+        allowed, reason = self.session_manager.validate_action("transcribe")
+        if not allowed:
+            QMessageBox.warning(self, "操作受限", f"无法继续: {reason}")
             return
-        
-        # 获取转录设置
+            
+        # 获取转录参数
+        file_path = self.audio_path or self.extracted_audio_path
         model_name = self.model_selector.get_current_model()
         language = self.ui.comboLanguage.currentText()
-        chunk_length = 10  # 使用默认值10秒
+        chunk_length = self.ui.spinChunkLength.value()
         
-        # 检查模型是否已下载
-        status = self.model_manager.get_model_status(model_name)
-        if status["status"] != "downloaded":
-            self.show_error(f"模型 {model_name} 尚未下载，请先下载模型")
+        if not file_path:
+            QMessageBox.warning(self, "错误", "请先选择音频文件")
             return
         
-        # 禁用UI
-        self.setEnabled(False)
+        # 检查是否需要初始化或更新analyzer
+        if self.analyzer is None or self.current_model_name != model_name:
+            try:
+                # 显示初始化进度
+                self.update_progress("初始化转录模型...", 0)
+                
+                # 更新当前使用的模型名称
+                self.current_model_name = model_name
+                
+                # 创建新的分析器
+                self.analyzer = AudioAnalyzer(model_name=model_name)
+                
+                # 确保加载模型
+                self.analyzer._ensure_model_loaded(chunk_length_s=chunk_length)
+                
+                self.update_progress("模型加载完成", 10)
+            except Exception as e:
+                self.show_error(f"模型初始化失败: {str(e)}")
+                return
         
-        # 清除之前的结果
+        # 禁用UI
+        self.ui.btnTranscribe.setEnabled(False)
+        self.ui.progressBar.setValue(0)
+        self.ui.progressBar.show()
+        
+        # 清除旧数据
         self.transcription = None
         self.segments = None
+        self.filtered_segments = None
+        self.selected_segments = []
+        self.ui.tableSegments.clearContents()
         self.ui.tableSegments.setRowCount(0)
         
-        # 更新状态
-        self.ui.lblStatus.setText("正在转录...")
-        self.ui.progressBar.setValue(0)
-        
-        # 更新步骤指示器
-        self.update_step_indicator(2)
-        
         # 创建并启动转录线程
-        self.transcribe_thread = TranscriptionThread(
-            self.extracted_audio_path, model_name, language, chunk_length
-        )
-        self.transcribe_thread.progress_signal.connect(self.update_progress)
-        self.transcribe_thread.result_signal.connect(self.on_transcription_completed)
-        self.transcribe_thread.error_signal.connect(self.show_error)
-        self.transcribe_thread.start()
+        self.transcription_thread = TranscriptionThread(file_path, model_name, language, chunk_length, self.analyzer)
+        self.transcription_thread.progress_signal.connect(self.update_progress)
+        self.transcription_thread.result_signal.connect(self.on_transcription_completed)
+        self.transcription_thread.error_signal.connect(self.show_error)
+        self.transcription_thread.start()
     
     def on_transcription_completed(self, result):
         """转录完成时的回调"""
@@ -375,6 +644,10 @@ class MainWindow(QMainWindow):
         self.segments = self.extract_segments(result)
         self.filtered_segments = None
         self.selected_segments = []
+        
+        # 初始化计数
+        self.total_segments = len(self.segments) if self.segments else 0
+        self.selected_count = 0
         
         # 显示转录结果
         self.update_duration_range()
@@ -462,26 +735,57 @@ class MainWindow(QMainWindow):
             
         # 更新统计信息
         self.total_segments = len(self.segments) if self.segments else 0
+        self.selected_count = len(self.selected_segments)
+        
+        # 更新UI中的计数显示
+        self.update_count_display()
         
         # 清空并设置表格行数
         self.ui.tableSegments.setRowCount(len(segments))
+        
+        # 确定当前显示的段落中有多少被选中
+        displayed_selected_count = 0
         
         for i, segment in enumerate(segments):
             # 创建操作列（复选框）
             checkbox_widget = QWidget()
             checkbox_layout = QHBoxLayout(checkbox_widget)
-            checkbox_layout.setContentsMargins(0, 0, 0, 0)
+            checkbox_layout.setContentsMargins(5, 5, 5, 5)
             checkbox_layout.setAlignment(Qt.AlignCenter)
             
             checkbox = QCheckBox()
+            checkbox.setStyleSheet("""
+                QCheckBox {
+                    spacing: 5px;
+                }
+                QCheckBox::indicator {
+                    width: 20px;
+                    height: 20px;
+                    border: 2px solid #999;
+                    border-radius: 4px;
+                }
+                QCheckBox::indicator:unchecked {
+                    background-color: #444;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #3498db;
+                    border-color: #2980b9;
+                }
+            """)
+            
             # 根据显示模式设置复选框状态
+            is_checked = False
             if show_mode == "selected":
-                checkbox.setChecked(True)
+                is_checked = True
             elif show_mode == "unselected":
-                checkbox.setChecked(False)
+                is_checked = False
             else:  # "all" 模式
-                checkbox.setChecked(segment in self.selected_segments)
+                is_checked = segment in self.selected_segments
                 
+            if is_checked:
+                displayed_selected_count += 1
+                
+            checkbox.setChecked(is_checked)
             checkbox.stateChanged.connect(lambda state, row=i, seg=segment: self.on_segment_selected(row, state, seg))
             
             checkbox_layout.addWidget(checkbox)
@@ -504,13 +808,31 @@ class MainWindow(QMainWindow):
             text = segment.get("text", "").strip()
             self.ui.tableSegments.setItem(i, 3, self.create_table_item(text))
             
-            # 添加操作按钮（播放、删除）
+            # 添加操作按钮（播放）
             button_widget = QWidget()
             button_layout = QHBoxLayout(button_widget)
             button_layout.setContentsMargins(3, 3, 3, 3)
+            button_layout.setAlignment(Qt.AlignCenter)
             
-            play_button = QPushButton("播放")
-            play_button.setFixedWidth(50)
+            play_button = QPushButton()
+            play_button.setToolTip("播放此片段")
+            play_button.setFixedSize(30, 30)
+            play_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #3498db;
+                    border-radius: 15px;
+                    color: white;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #2980b9;
+                }
+                QPushButton:pressed {
+                    background-color: #1f6aa5;
+                }
+            """)
+            # 使用三角形符号表示播放
+            play_button.setText("▶")
             play_button.clicked.connect(lambda _, row=i: self.play_segment(row))
             
             button_layout.addWidget(play_button)
@@ -520,8 +842,34 @@ class MainWindow(QMainWindow):
             # 保存segment对象到表格项中
             self.ui.tableSegments.item(i, 3).setData(Qt.UserRole, segment)
         
-        # 选中"全部"单选按钮
-        self.ui.radioAll.setChecked(True)
+        # 设置列宽
+        table_width = self.ui.tableSegments.width()
+        # 选择列 - 紧凑
+        self.ui.tableSegments.setColumnWidth(0, int(table_width * 0.05))
+        # 时间范围 - 固定宽度，足够显示时间
+        self.ui.tableSegments.setColumnWidth(1, int(table_width * 0.15))
+        # 持续时间 - 较窄，只需显示几个数字
+        self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.08))
+        # 播放按钮 - 固定宽度，仅容纳按钮
+        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.05))
+        # 内容列 - 占据剩余空间
+        # 内容列显式设置较大宽度，确保它获得足够空间
+        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.67))
+        
+        # 更新全选按钮文本
+        if hasattr(self, 'btn_select_all'):
+            if len(segments) > 0 and displayed_selected_count == len(segments):
+                self.btn_select_all.setText("取消全选")
+            else:
+                self.btn_select_all.setText("全选")
+        
+        # 根据当前模式设置单选按钮状态
+        if show_mode == "selected":
+            self.ui.radioSelected.setChecked(True)
+        elif show_mode == "unselected":
+            self.ui.radioUnselected.setChecked(True)
+        else:
+            self.ui.radioAll.setChecked(True)
         
         # 更新UI状态
         self.update_ui_state()
@@ -560,6 +908,9 @@ class MainWindow(QMainWindow):
                 self.selected_segments.remove(segment)
                 self.selected_count -= 1
         
+        # 更新计数显示
+        self.update_count_display()
+        
         # 如果当前正在"已选择"或"未选择"标签，需要刷新显示
         if current_tab in ["selected", "unselected"]:
             self.show_segments_by_status(current_tab)
@@ -569,7 +920,14 @@ class MainWindow(QMainWindow):
     
     def play_segment(self, row):
         """播放指定行的音频片段"""
-        if not self.segments or row >= len(self.segments) or not self.extracted_audio_path:
+        if not self.segments or row >= len(self.segments):
+            self.show_error("无法播放：段落不存在")
+            return
+            
+        # 检查音频文件是否存在
+        file_path = self.audio_path or self.extracted_audio_path
+        if not file_path or not os.path.exists(file_path):
+            self.show_error(f"音频文件不存在: {file_path}")
             return
             
         segment = self.segments[row]
@@ -581,29 +939,48 @@ class MainWindow(QMainWindow):
             processor = AudioProcessor()
             
             self.update_progress("正在准备播放...", 0)
-            output_files = processor.split_audio(
-                self.extracted_audio_path,
-                [segment],
-                file_prefix="temp_play",
-                progress_callback=lambda msg, progress: self.update_progress(msg, progress)
-            )
+            # 获取临时目录，确保存在
+            temp_dir = os.path.join(os.path.dirname(file_path), "temp_audio")
+            os.makedirs(temp_dir, exist_ok=True)
             
-            if output_files and os.path.exists(output_files[0]):
+            # 使用绝对路径
+            output_file = os.path.join(temp_dir, f"temp_play_{start_time:.2f}_{end_time:.2f}.mp3")
+            
+            # 使用ffmpeg直接裁剪音频文件（简化播放逻辑）
+            import subprocess
+            cmd = [
+                "ffmpeg", "-y", 
+                "-i", file_path,
+                "-ss", str(start_time),
+                "-to", str(end_time),
+                "-c:a", "mp3", 
+                output_file
+            ]
+            
+            self.update_progress(f"正在剪切音频片段: {start_time:.2f}s - {end_time:.2f}s", 20)
+            subprocess.run(cmd, check=True, capture_output=True)
+            
+            if os.path.exists(output_file):
+                self.update_progress("准备播放...", 90)
                 # 使用系统默认播放器播放
-                import subprocess
                 import platform
                 
                 if platform.system() == "Darwin":  # macOS
-                    subprocess.Popen(["open", output_files[0]])
+                    subprocess.Popen(["open", output_file])
+                    self.update_progress("已发送播放指令 (macOS)", 100)
                 elif platform.system() == "Windows":
-                    os.startfile(output_files[0])
+                    os.startfile(output_file)
+                    self.update_progress("已发送播放指令 (Windows)", 100)
                 else:  # Linux
-                    subprocess.Popen(["xdg-open", output_files[0]])
-                    
-                self.update_progress("播放中...", 100)
+                    subprocess.Popen(["xdg-open", output_file])
+                    self.update_progress("已发送播放指令 (Linux)", 100)
+            else:
+                self.show_error(f"剪切音频失败，临时文件未生成: {output_file}")
             
         except Exception as e:
-            self.show_error(f"播放失败: {str(e)}")
+            import traceback
+            error_details = traceback.format_exc()
+            self.show_error(f"播放失败: {str(e)}\n详细错误: {error_details}")
     
     def apply_all_filters(self):
         """应用所有过滤条件（关键词和时长）"""
@@ -675,6 +1052,9 @@ class MainWindow(QMainWindow):
         # 更新段落并显示
         self.filtered_segments = filtered_segments
         
+        # 计算筛选结果数量
+        self.filtered_count = len(filtered_segments)
+        
         current_tab = "all"
         if self.ui.radioSelected.isChecked():
             current_tab = "selected"
@@ -689,12 +1069,20 @@ class MainWindow(QMainWindow):
         if not self.segments:
             return
             
+        # 更新单选按钮状态 - 确保UI正确反映当前选择
+        if status == "all":
+            self.ui.radioAll.setChecked(True)
+        elif status == "selected":
+            self.ui.radioSelected.setChecked(True)
+        elif status == "unselected":
+            self.ui.radioUnselected.setChecked(True)
+            
         if status == "all":
             # 显示全部 - 如果有过滤结果，则显示过滤后的结果
             if self.filtered_segments is not None:
-                self.display_segments(self.filtered_segments)
+                self.display_segments(self.filtered_segments, "all")
             else:
-                self.display_segments(self.segments)
+                self.display_segments(self.segments, "all")
         elif status == "selected":
             # 只显示已选择的，并且要符合过滤条件
             if self.selected_segments:
@@ -707,6 +1095,8 @@ class MainWindow(QMainWindow):
             else:
                 # 如果没有选择任何片段，显示空表格
                 self.ui.tableSegments.setRowCount(0)
+                # 更新计数显示
+                self.update_count_display()
         elif status == "unselected":
             # 显示未选择的，并且要符合过滤条件
             if self.filtered_segments is not None:
@@ -718,40 +1108,43 @@ class MainWindow(QMainWindow):
                 self.display_segments(unselected_segments, "unselected")
     
     def export_selected_segments(self):
-        """导出选中的片段"""
-        if not self.selected_segments or not self.extracted_audio_path:
-            self.show_error("请先选择要导出的片段")
+        """导出选中的音频片段"""
+        # 验证用户是否有权限执行此操作
+        allowed, reason = self.session_manager.validate_action("export")
+        if not allowed:
+            QMessageBox.warning(self, "操作受限", f"无法继续: {reason}")
             return
-        
-        # 更新步骤指示器
-        self.update_step_indicator(4)
+            
+        # 检查是否有选中的片段
+        if not self.selected_segments:
+            QMessageBox.warning(self, "警告", "请先选择要导出的音频片段")
+            return
+            
+        # 获取导出参数
+        source_path = self.audio_path or self.extracted_audio_path
+        output_format = self.ui.comboFormat.currentText()
+        output_bitrate = self.ui.comboBitrate.currentText()
         
         # 选择输出目录
-        output_dir = QFileDialog.getExistingDirectory(
-            self,
-            "选择导出目录",
-            ""
-        )
-        
+        output_dir = QFileDialog.getExistingDirectory(self, "选择输出目录")
         if not output_dir:
             return
             
-        # 获取导出设置
-        file_prefix = self.ui.editFilePrefix.text() or "segment"
-        output_format = self.ui.comboFormat.currentText().lower()
-        bitrate = self.ui.comboBitrate.currentText()
+        # 获取文件前缀
+        file_prefix = os.path.splitext(os.path.basename(source_path))[0] + "_segment"
         
-        # 禁用UI
-        self.setEnabled(False)
+        # 显示进度条
+        self.ui.progressBar.setValue(0)
+        self.ui.progressBar.show()
         
         # 创建并启动导出线程
         self.export_thread = ExportThread(
-            self.extracted_audio_path,
+            source_path,
             self.selected_segments,
             output_dir,
             file_prefix,
             output_format,
-            bitrate
+            output_bitrate
         )
         self.export_thread.progress_signal.connect(self.update_progress)
         self.export_thread.result_signal.connect(self.on_export_completed)
@@ -759,53 +1152,43 @@ class MainWindow(QMainWindow):
         self.export_thread.start()
     
     def batch_export_segments(self):
-        """批量导出所有片段"""
-        if not self.segments or not self.extracted_audio_path:
-            self.show_error("没有可导出的片段")
+        """批量导出音频片段"""
+        # 验证用户是否有权限执行此操作
+        allowed, reason = self.session_manager.validate_action("batch_process")
+        if not allowed:
+            QMessageBox.warning(self, "操作受限", f"无法继续: {reason}")
             return
-        
-        # 更新步骤指示器
-        self.update_step_indicator(4)
-        
-        # 根据当前显示状态决定导出哪些片段
-        segments_to_export = []
-        if self.ui.radioAll.isChecked():
-            segments_to_export = self.segments
-        elif self.ui.radioSelected.isChecked():
-            segments_to_export = self.selected_segments
-        elif self.ui.radioUnselected.isChecked():
-            segments_to_export = [s for s in self.segments if s not in self.selected_segments]
-        
-        if not segments_to_export:
-            self.show_error("当前没有可导出的片段")
+            
+        # 检查是否有选中的片段
+        if not self.selected_segments:
+            QMessageBox.warning(self, "警告", "请先选择要导出的音频片段")
             return
+            
+        # 获取导出参数
+        source_path = self.audio_path or self.extracted_audio_path
+        output_format = self.ui.comboFormat.currentText()
+        output_bitrate = self.ui.comboBitrate.currentText()
         
         # 选择输出目录
-        output_dir = QFileDialog.getExistingDirectory(
-            self,
-            "选择导出目录",
-            ""
-        )
-        
+        output_dir = QFileDialog.getExistingDirectory(self, "选择输出目录")
         if not output_dir:
             return
             
-        # 获取导出设置
-        file_prefix = self.ui.editFilePrefix.text() or "segment"
-        output_format = self.ui.comboFormat.currentText().lower()
-        bitrate = self.ui.comboBitrate.currentText()
+        # 获取文件前缀
+        file_prefix = os.path.splitext(os.path.basename(source_path))[0] + "_segment"
         
-        # 禁用UI
-        self.setEnabled(False)
+        # 显示进度条
+        self.ui.progressBar.setValue(0)
+        self.ui.progressBar.show()
         
         # 创建并启动导出线程
         self.export_thread = ExportThread(
-            self.extracted_audio_path,
-            segments_to_export,
+            source_path,
+            self.selected_segments,
             output_dir,
             file_prefix,
             output_format,
-            bitrate
+            output_bitrate
         )
         self.export_thread.progress_signal.connect(self.update_progress)
         self.export_thread.result_signal.connect(self.on_export_completed)
@@ -849,6 +1232,12 @@ class MainWindow(QMainWindow):
     
     def download_model(self, model_name):
         """下载指定的模型"""
+        # 验证用户是否有权限执行此操作
+        allowed, reason = self.session_manager.validate_action("download_large_model")
+        if not allowed and model_name in ["whisper-medium", "whisper-large"]:
+            QMessageBox.warning(self, "操作受限", f"无法下载大型模型: {reason}")
+            return
+            
         # 开始下载模型
         self.model_manager.download_model(model_name, self.on_model_download_progress)
     
@@ -892,6 +1281,43 @@ class MainWindow(QMainWindow):
         self.ui.lblSystemStatus.setText(status_text)
         self.ui.lblSystemStatus.setTextFormat(Qt.RichText)
     
+    def closeEvent(self, event):
+        """处理窗口关闭事件"""
+        # 如果未登录，直接关闭
+        if not self.session_manager.is_logged_in:
+            event.accept()
+            return
+            
+        # 如果已登录，询问用户是否确认关闭
+        reply = QMessageBox.question(
+            self,
+            "确认退出",
+            "确定要退出应用程序吗？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            event.accept()
+        else:
+            event.ignore()
+    
+    def update_count_display(self):
+        """更新界面上的计数显示"""
+        total = self.total_segments
+        selected = self.selected_count
+        unselected = total - selected
+        
+        # 更新单选按钮上的计数
+        self.ui.radioAll.setText(f"全部")
+        self.ui.radioSelected.setText(f"已选择")
+        self.ui.radioUnselected.setText(f"未选择")
+        
+        # 更新标签上的统计数据
+        self.ui.lblStatTotal.setText(f"总计: {total}")
+        self.ui.lblStatSelected.setText(f"已选择: {selected}")
+        self.ui.lblStatUnselected.setText(f"未选择: {unselected}")
+
 def main():
     app = QApplication(sys.argv)
     

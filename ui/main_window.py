@@ -12,7 +12,7 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         # 设置窗口基本属性
         MainWindow.setWindowTitle("音频内容分析与处理")
-        MainWindow.resize(1000, 800)
+        MainWindow.resize(1600, 1200)
         
         # 中央窗口部件
         central_widget = QWidget()
@@ -133,6 +133,31 @@ class Ui_MainWindow(object):
             }
         """)
         
+        self.lblChunkLength = QLabel("分段长度:")
+        self.lblChunkLength.setStyleSheet("color: #ddd;")
+        
+        self.spinChunkLength = QSpinBox()
+        self.spinChunkLength.setRange(5, 30)
+        self.spinChunkLength.setValue(10)
+        self.spinChunkLength.setSuffix(" 秒")
+        self.spinChunkLength.setFixedWidth(80)
+        self.spinChunkLength.setStyleSheet("""
+            QSpinBox {
+                border: 1px solid #555;
+                border-radius: 4px;
+                padding: 4px;
+                background-color: #444;
+                color: #ddd;
+            }
+            QSpinBox:focus {
+                border: 1px solid #6af;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                background-color: #555;
+                border: none;
+            }
+        """)
+        
         self.btnTranscribe = QPushButton("开始转录")
         self.btnTranscribe.setStyleSheet("""
             QPushButton {
@@ -158,6 +183,8 @@ class Ui_MainWindow(object):
         transcribe_layout.addWidget(self.modelSelector)  # 使用modelSelector替换comboModelName
         transcribe_layout.addWidget(self.lblLanguage)
         transcribe_layout.addWidget(self.comboLanguage)
+        transcribe_layout.addWidget(self.lblChunkLength)
+        transcribe_layout.addWidget(self.spinChunkLength)
         transcribe_layout.addStretch(1)
         transcribe_layout.addWidget(self.btnTranscribe)
         
@@ -167,6 +194,9 @@ class Ui_MainWindow(object):
         # 音频内容分段区域
         segments_group = QGroupBox("音频内容分段")
         segments_layout = QVBoxLayout()
+        
+        # 保存为类属性
+        self.segments_group = segments_group
         
         # 过滤区域
         filter_frame = QFrame()
@@ -178,6 +208,9 @@ class Ui_MainWindow(object):
                 border-radius: 8px;
             }
         """)
+        
+        # 保存为类属性
+        self.filter_group = filter_frame
         
         filter_layout = QHBoxLayout(filter_frame)
         filter_layout.setContentsMargins(15, 10, 15, 10)
@@ -463,6 +496,9 @@ class Ui_MainWindow(object):
         # 导出设置
         export_group = QGroupBox("导出设置")
         export_layout = QGridLayout()
+        
+        # 保存为类属性
+        self.export_group = export_group
         
         self.lblFilePrefix = QLabel("文件名前缀:")
         self.lblFilePrefix.setStyleSheet("color: #ddd;")

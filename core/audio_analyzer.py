@@ -102,7 +102,6 @@ class AudioAnalyzer:
             
             # 配置生成参数
             generate_kwargs = {}
-            generate_kwargs["task"] = "transcribe"
             
             # 将界面语言转换为模型支持的标准语言代码
             language_mapping = {
