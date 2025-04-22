@@ -113,7 +113,7 @@ class Ui_MainWindow(object):
         self.lblLanguage.setStyleSheet("color: #ddd;")
         
         self.comboLanguage = QComboBox()
-        self.comboLanguage.addItems(["中文", "英文", "日文", "韩文", "自动检测"])
+        self.comboLanguage.addItems(["中文"])
         self.comboLanguage.setFixedWidth(150)
         self.comboLanguage.setStyleSheet("""
             QComboBox {
@@ -521,7 +521,7 @@ class Ui_MainWindow(object):
         self.lblFormat.setStyleSheet("color: #ddd;")
         
         self.comboFormat = QComboBox()
-        self.comboFormat.addItems(["MP3", "WAV", "OGG", "FLAC", "M4A"])
+        self.comboFormat.addItems(["MP3"])
         self.comboFormat.setStyleSheet("""
             QComboBox {
                 border: 1px solid #555;
@@ -544,7 +544,7 @@ class Ui_MainWindow(object):
         self.lblBitrate.setStyleSheet("color: #ddd;")
         
         self.comboBitrate = QComboBox()
-        self.comboBitrate.addItems(["96k", "128k", "192k", "256k", "320k"])
+        self.comboBitrate.addItems(["192k"])
         self.comboBitrate.setCurrentText("192k")
         self.comboBitrate.setStyleSheet("""
             QComboBox {

@@ -1,13 +1,15 @@
 import sys
 import os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QTableWidgetItem, QCheckBox, QWidget, QHBoxLayout, QPushButton, QSlider, QSpinBox, QLabel, QHeaderView
+from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QTableWidgetItem, QCheckBox, QWidget, QHBoxLayout, QPushButton, QSlider, QSpinBox, QLabel, QHeaderView, QDialog, QVBoxLayout
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QIcon
+from datetime import datetime
 
 from ui.main_window import Ui_MainWindow
 from ui.model_selector import ModelSelector
 from ui.system_info_dialog import SystemInfoDialog
 from ui.login_dialog import LoginDialog
+from ui.device_list_dialog import DeviceListDialog
 from core.audio_analyzer import AudioAnalyzer
 from core.audio_processor import AudioProcessor
 from core.model_manager import ModelManager
@@ -154,8 +156,34 @@ class MainWindow(QMainWindow):
         self.login_button = QPushButton("登录")
         self.login_button.setFixedWidth(60)
         self.login_button.clicked.connect(self.show_login_dialog)
+        
+        # 添加设备列表按钮
+        self.btn_device_list = QPushButton("设备列表")
+        self.btn_device_list.setFixedWidth(80)
+        self.btn_device_list.setStyleSheet("""
+            QPushButton {
+                background-color: #2c3e50;
+                color: white;
+                border-radius: 3px;
+                padding: 3px;
+            }
+            QPushButton:hover {
+                background-color: #34495e;
+            }
+            QPushButton:pressed {
+                background-color: #1c2e40;
+            }
+            QPushButton:disabled {
+                background-color: #555;
+                color: #888;
+            }
+        """)
+        self.btn_device_list.clicked.connect(self.show_device_list)
+        self.btn_device_list.setEnabled(False)
+        
         self.login_status_layout.addWidget(self.login_status_label)
         self.login_status_layout.addWidget(self.login_button)
+        self.login_status_layout.addWidget(self.btn_device_list)
         
         # 将登录状态添加到状态栏区域
         status_layout = self.ui.lblStatus.parentWidget().layout()
@@ -192,8 +220,27 @@ class MainWindow(QMainWindow):
         self.setup_ui_state()
         self.update_step_indicator(1)
         
+        # 尝试加载会话
+        self.try_load_session()
+        
         # 登录对话框延迟显示，确保主窗口先显示
-        QTimer.singleShot(100, self.show_login_dialog)
+        # 仅在没有有效会话时显示登录对话框
+        if not self.session_manager.is_logged_in:
+            QTimer.singleShot(100, self.show_login_dialog)
+        
+    def try_load_session(self):
+        """尝试从文件加载会话信息"""
+        if self.session_manager.load_session():
+            print("成功加载会话")
+            
+            # 更新UI状态
+            self.update_ui_state()
+            
+            # 启用设备列表按钮
+            self.btn_device_list.setEnabled(True)
+            
+            return True
+        return False
         
     def on_session_changed(self, is_logged_in, status_message):
         """当会话状态改变时更新UI"""
@@ -203,10 +250,15 @@ class MainWindow(QMainWindow):
             self.login_button.setText("注销")
             self.login_button.clicked.disconnect()
             self.login_button.clicked.connect(self.logout)
+            self.btn_device_list.setEnabled(True)
+            
+            # 保存会话信息
+            self.session_manager.save_session()
         else:
             self.login_status_label.setText("未登录")
             self.login_status_label.setStyleSheet("color: #e74c3c;")
             self.login_button.setText("登录")
+            self.btn_device_list.setEnabled(False)
             try:
                 self.login_button.clicked.disconnect()
             except:
@@ -218,13 +270,16 @@ class MainWindow(QMainWindow):
         
     def show_login_dialog(self):
         """显示登录对话框"""
-        # 创建登录对话框
+        # 如果已经登录，则不显示登录对话框
+        if self.session_manager.is_logged_in:
+            return
+            
         dialog = LoginDialog(self)
         
-        # 设置为模态对话框，确保用户必须先处理登录
-        dialog.setWindowModality(Qt.ApplicationModal)
+        # 设置对话框为模态
+        dialog.setModal(True)
         
-        # 设置登录按钮点击事件
+        # 连接登录按钮点击事件
         dialog.btnLogin.clicked.connect(lambda: self.handle_login(dialog))
         
         # 连接登录成功信号
@@ -232,51 +287,50 @@ class MainWindow(QMainWindow):
         
         # 显示对话框
         dialog.exec_()
-        
+    
     def handle_login(self, dialog):
         """处理登录请求"""
         card_id = dialog.editCardId.text().strip()
         card_key = dialog.editCardKey.text().strip()
         
-        # 尝试登录
         success, message = self.session_manager.login(card_id, card_key)
         dialog.show_login_result(success, message)
         
         if success:
-            # 发出登录成功信号
+            # 登录成功，发出信号
             dialog.loginSuccess.emit(
                 self.session_manager.session_token,
                 self.session_manager.user_type,
-                self.session_manager.expiry_date or ""
+                self.session_manager.expiry_date
             )
-            dialog.accept()  # 关闭对话框
-            # 更新UI
-            self.update_ui_state()
+            dialog.accept()
     
     def on_login_success(self, session_token, user_type, expiry_date):
         """登录成功后的处理"""
-        # 显示欢迎信息
-        QMessageBox.information(
-            self,
-            "登录成功",
-            f"欢迎使用音频分割工具\n账户类型: {user_type}\n过期时间: {expiry_date}"
-        )
+        # 更新UI状态
+        self.update_ui_state()
         
+        # 启用设备列表按钮
+        self.btn_device_list.setEnabled(True)
+        
+        # 保存会话
+        self.session_manager.save_session()
+    
     def logout(self):
-        """注销当前会话"""
-        reply = QMessageBox.question(
-            self, 
-            "确认注销", 
-            "确定要注销当前会话吗？",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
-        
-        if reply == QMessageBox.Yes:
-            self.session_manager.logout()
-            # 显示登录对话框
-            self.show_login_dialog()
-        
+        """用户注销"""
+        self.session_manager.logout()
+        # 更新UI状态将通过sessionChanged信号触发
+    
+    def show_device_list(self):
+        """显示设备列表对话框"""
+        if not self.session_manager.is_logged_in:
+            QMessageBox.warning(self, "未登录", "请先登录再查看设备列表")
+            return
+            
+        # 使用DeviceListDialog代替自定义对话框实现
+        dialog = DeviceListDialog(self.session_manager, self)
+        dialog.exec_()
+    
     def setup_connections(self):
         # 文件选择
         self.ui.btnSelectFile.clicked.connect(self.select_file)
@@ -465,7 +519,7 @@ class MainWindow(QMainWindow):
         
         # 重新显示分段，使复选框状态与实际选择状态同步
         self.show_segments_by_status(current_tab)
-    
+        
     def update_step_indicator(self, step):
         """更新步骤指示器状态"""
         # 步骤列表
@@ -558,9 +612,11 @@ class MainWindow(QMainWindow):
                 if file_path.lower().endswith(('.mp4', '.mkv', '.avi', '.mov')):
                     self.extract_audio(file_path)
                 else:
+                    # 对于音频文件，直接设置路径
                     self.audio_path = file_path
                     self.update_step_indicator(2)
                     self.update_ui_state()
+                    print(f"已选择音频文件: {file_path}")
     
     def extract_audio(self, file_path):
         # 禁用UI
@@ -585,7 +641,7 @@ class MainWindow(QMainWindow):
         if not allowed:
             QMessageBox.warning(self, "操作受限", f"无法继续: {reason}")
             return
-            
+        
         # 获取转录参数
         file_path = self.audio_path or self.extracted_audio_path
         model_name = self.model_selector.get_current_model()
@@ -612,9 +668,10 @@ class MainWindow(QMainWindow):
                 self.analyzer._ensure_model_loaded(chunk_length_s=chunk_length)
                 
                 self.update_progress("模型加载完成", 10)
+                # 继续执行转录流程，而不是返回
             except Exception as e:
                 self.show_error(f"模型初始化失败: {str(e)}")
-                return
+                return  # 只有在初始化失败时才返回
         
         # 禁用UI
         self.ui.btnTranscribe.setEnabled(False)
@@ -652,6 +709,9 @@ class MainWindow(QMainWindow):
         # 显示转录结果
         self.update_duration_range()
         self.display_segments(self.segments)
+        
+        # 更新步骤指示器到"分割音频"步骤
+        self.update_step_indicator(3)
         
         # 启用UI
         self.setEnabled(True)
@@ -1114,7 +1174,7 @@ class MainWindow(QMainWindow):
         if not allowed:
             QMessageBox.warning(self, "操作受限", f"无法继续: {reason}")
             return
-            
+        
         # 检查是否有选中的片段
         if not self.selected_segments:
             QMessageBox.warning(self, "警告", "请先选择要导出的音频片段")
@@ -1158,12 +1218,12 @@ class MainWindow(QMainWindow):
         if not allowed:
             QMessageBox.warning(self, "操作受限", f"无法继续: {reason}")
             return
-            
+        
         # 检查是否有选中的片段
         if not self.selected_segments:
             QMessageBox.warning(self, "警告", "请先选择要导出的音频片段")
             return
-            
+        
         # 获取导出参数
         source_path = self.audio_path or self.extracted_audio_path
         output_format = self.ui.comboFormat.currentText()
@@ -1317,7 +1377,7 @@ class MainWindow(QMainWindow):
         self.ui.lblStatTotal.setText(f"总计: {total}")
         self.ui.lblStatSelected.setText(f"已选择: {selected}")
         self.ui.lblStatUnselected.setText(f"未选择: {unselected}")
-
+    
 def main():
     app = QApplication(sys.argv)
     

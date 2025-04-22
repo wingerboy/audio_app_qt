@@ -11,13 +11,13 @@ class LoginDialog(QDialog):
         super(LoginDialog, self).__init__(parent)
         self.setWindowTitle("用户登录")
         self.setMinimumWidth(400)
-        self.setMinimumHeight(230)
+        self.setMinimumHeight(250)
         # 设置为应用模态，阻止与其他窗口交互
         self.setWindowModality(Qt.ApplicationModal)
         # 移除帮助按钮
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
         # 设置为固定大小
-        self.setFixedSize(400, 230)
+        self.setFixedSize(400, 250)
         
         # 创建布局
         self.init_ui()
@@ -44,6 +44,12 @@ class LoginDialog(QDialog):
         title_layout.addStretch()
         main_layout.addLayout(title_layout)
         
+        # 设备绑定提示
+        self.device_info_label = QLabel("登录将绑定您的设备，请确保当前设备为个人常用设备")
+        self.device_info_label.setStyleSheet("color: #e74c3c; font-style: italic;")
+        self.device_info_label.setWordWrap(True)
+        main_layout.addWidget(self.device_info_label)
+        
         # 表单
         form_layout = QFormLayout()
         form_layout.setSpacing(15)
@@ -65,6 +71,13 @@ class LoginDialog(QDialog):
         form_layout.addRow("卡密密钥:", self.editCardKey)
         
         main_layout.addLayout(form_layout)
+        
+        # 添加状态提示标签
+        self.status_label = QLabel("")
+        self.status_label.setStyleSheet("color: #e74c3c;")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.hide()
+        main_layout.addWidget(self.status_label)
         
         # 进度条
         self.progressBar = QProgressBar()
@@ -93,6 +106,10 @@ class LoginDialog(QDialog):
             QPushButton:pressed {
                 background-color: #3f3c9e;
             }
+            QPushButton:disabled {
+                background-color: #aaa;
+                color: #eee;
+            }
         """)
         btn_layout.addWidget(self.btnLogin)
         btn_layout.addStretch()
@@ -110,7 +127,10 @@ class LoginDialog(QDialog):
             QMessageBox.warning(self, "警告", "请输入卡密ID和密钥")
             return
         
-        # 显示进度条
+        # 显示进度条和状态
+        self.status_label.setText("正在登录，请稍候...")
+        self.status_label.setStyleSheet("color: #3498db;")
+        self.status_label.show()
         self.progressBar.show()
         self.btnLogin.setEnabled(False)
         
@@ -119,16 +139,19 @@ class LoginDialog(QDialog):
         
     def show_login_result(self, success, message):
         self.progressBar.hide()
-        self.btnLogin.setEnabled(True)
         
         if not success:
-            QMessageBox.warning(self, "登录失败", message)
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("color: #e74c3c;")
+            self.btnLogin.setEnabled(True)
             return
         
+        # 登录成功
+        self.status_label.setText("登录成功，正在初始化...")
+        self.status_label.setStyleSheet("color: #27ae60;")
         # 登录成功时发出信号
         # 此方法由MainWindow中的handle_login方法在登录成功后调用
         # 而实际的session_token等数据已经存储在SessionManager中
-        # 可以通过SessionManager.session_token等属性获取
         
     def keyPressEvent(self, event):
         # 重写keyPressEvent，阻止Escape键关闭对话框
