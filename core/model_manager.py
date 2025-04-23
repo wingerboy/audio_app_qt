@@ -149,7 +149,7 @@ class ModelManager:
             if progress_callback:
                 progress_callback(model_name, 5, "开始下载...")
                 
-            processor = AutoProcessor.from_pretrained(model_name)
+            processor = AutoProcessor.from_pretrained(model_name,  mirror="hf-mirror")
             
             if progress_callback:
                 progress_callback(model_name, 30, "下载配置完成，正在下载模型...")
@@ -163,7 +163,8 @@ class ModelManager:
                 model_name,
                 torch_dtype=torch_dtype,
                 low_cpu_mem_usage=True,
-                use_safetensors=True
+                use_safetensors=True,
+                mirror="hf-mirror"
             )
             
             # 强制模型保存到磁盘以确保文件全部下载
