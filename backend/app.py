@@ -90,7 +90,7 @@ DB_CONFIG = {
     'host': 'obmt6nn1aqdr2nb4-mi.aliyun-cn-hangzhou-internet.oceanbase.cloud',
     'port': 3306,
     'user': 'wingerboy',
-    'password': 'L',
+    'password': 'LI',
     'db': 'audio_app_offline',
     'charset': 'utf8mb4',
     'cursorclass': DictCursor
@@ -160,6 +160,7 @@ class SessionManager:
                 login_at DATETIME NOT NULL,
                 ip_address VARCHAR(64) NOT NULL,
                 user_agent TEXT,
+                hardware_info TEXT,
                 status VARCHAR(16) NOT NULL,
                 reason TEXT,
                 INDEX (card_id),
@@ -283,7 +284,7 @@ class SessionManager:
             if not card:
                 # 记录失败登录
                 self._log_login(cursor, card_id, device_fingerprint, "", ip_address, 
-                              user_agent, "failed", "卡密无效")
+                              user_agent, "failed", "卡密无效", hardware_info)
                 conn.commit()
                 logger.warning(f"登录失败: 卡密无效 - 卡密ID: {card_id}, IP: {ip_address}")
                 return False, "卡密无效或密钥错误", None
@@ -308,7 +309,7 @@ class SessionManager:
             elif card['status'] != 'active':
                 reason = "卡密已禁用或过期"
                 self._log_login(cursor, card_id, device_fingerprint, "", ip_address, 
-                              user_agent, "failed", reason)
+                              user_agent, "failed", reason, hardware_info)
                 conn.commit()
                 logger.warning(f"登录失败: {reason} - 卡密ID: {card_id}, 状态: {card['status']}")
                 return False, reason, None
@@ -317,7 +318,7 @@ class SessionManager:
             if card['expiry_date'] and card['expiry_date'] < now:
                 reason = "卡密已过期"
                 self._log_login(cursor, card_id, device_fingerprint, "", ip_address, 
-                              user_agent, "failed", reason)
+                              user_agent, "failed", reason, hardware_info)
                 # 更新卡密状态
                 cursor.execute(
                     "UPDATE card_keys SET status = 'expired' WHERE card_id = %s", 
@@ -339,7 +340,7 @@ class SessionManager:
             if not device_session and card['device_count'] >= max_devices:
                 reason = f"该卡密已绑定{max_devices}台设备，已超出最大限制"
                 self._log_login(cursor, card_id, device_fingerprint, "", ip_address, 
-                              user_agent, "blocked", reason)
+                              user_agent, "blocked", reason, hardware_info)
                 conn.commit()
                 logger.warning(f"登录失败: 设备数量限制 - 卡密ID: {card_id}, 当前设备数: {card['device_count']}, 最大限制: {max_devices}")
                 return False, reason, None
@@ -390,7 +391,7 @@ class SessionManager:
             
             # 记录成功登录
             self._log_login(cursor, card_id, device_fingerprint, session_token, 
-                          ip_address, user_agent, "success", "")
+                          ip_address, user_agent, "success", "", hardware_info)
             
             conn.commit()
             
@@ -566,16 +567,16 @@ class SessionManager:
             conn.close()
     
     def _log_login(self, cursor, card_id, device_fingerprint, session_token, 
-                  ip_address, user_agent, status, reason):
+                  ip_address, user_agent, status, reason, hardware_info=None):
         """记录登录活动"""
         now = datetime.datetime.now()
         cursor.execute(
             """INSERT INTO login_history 
                (card_id, device_fingerprint, session_token, login_at, 
-                ip_address, user_agent, status, reason) 
-               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""", 
+                ip_address, user_agent, hardware_info, status, reason) 
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""", 
             (card_id, device_fingerprint, session_token, now, 
-             ip_address, user_agent, status, reason)
+             ip_address, user_agent, hardware_info, status, reason)
         )
 
     def log_to_db(self, request_id, endpoint, method, request_data, response_data, 
