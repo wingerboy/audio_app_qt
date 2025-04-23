@@ -56,13 +56,83 @@ class AudioAnalyzer:
         
         self.pipe = None
     
+    def _get_model_path(self, model_name):
+        """
+        获取模型的本地路径
+        
+        Args:
+            model_name: 模型名称，如'openai/whisper-tiny'
+            
+        Returns:
+            str: 模型的本地路径
+        """
+        # 提取模型名称部分，去掉组织名
+        model_id = model_name.split("/")[-1] if "/" in model_name else model_name
+        
+        # 首先检查用户指定的本地目录
+        local_paths = [
+            # 标准缓存目录（与ModelManager一致）
+            os.path.join(os.path.expanduser("~"), ".cache", "whisper_models", model_id),
+        ]
+        
+        # 检查是否存在任一路径
+        for path in local_paths:
+            if os.path.exists(path):
+                print(f"在本地找到模型: {path}")
+                return path
+        
+        # 默认返回缓存目录
+        return os.path.join(os.path.expanduser("~"), ".cache", "whisper_models", model_id)
+    
     def _ensure_model_loaded(self, chunk_length_s=10):
         """确保模型已加载"""
         if self.pipe is None:
             try:
+                # 获取模型的本地路径
+                model_path = self._get_model_path(self.model_name)
+                
+                # 检查模型是否存在
+                if not os.path.exists(model_path):
+                    # 如果本地不存在，尝试使用ModelManager下载
+                    try:
+                        from core.model_manager import ModelManager
+                        print(f"模型文件不存在: {model_path}，尝试从OSS下载...")
+                        model_manager = ModelManager()
+                        # 检查模型是否可下载
+                        if not model_manager.is_model_downloaded(self.model_name):
+                            # 使用同步方式下载模型
+                            model_manager.download_model(self.model_name)
+                            # 等待下载完成
+                            max_wait = 600  # 最多等待10分钟
+                            wait_time = 0
+                            check_interval = 5  # 每5秒检查一次
+                            while wait_time < max_wait:
+                                status = model_manager.get_model_status(self.model_name)
+                                if status["status"] == "downloaded":
+                                    print(f"模型下载完成: {self.model_name}")
+                                    break
+                                elif status["status"] == "failed":
+                                    raise Exception(f"模型下载失败: {self.model_name}")
+                                print(f"等待模型下载完成... {status.get('progress', 0)}%")
+                                import time
+                                time.sleep(check_interval)
+                                wait_time += check_interval
+                            
+                            # 重新获取模型路径
+                            model_path = self._get_model_path(self.model_name)
+                            if not os.path.exists(model_path):
+                                raise FileNotFoundError(f"下载模型后路径仍不存在: {model_path}")
+                        else:
+                            model_path = model_manager.get_model_path(self.model_name)
+                    except ImportError:
+                        raise FileNotFoundError(f"模型文件不存在: {model_path}，请先下载模型")
+                
+                print(f"从本地加载模型: {model_path}")
+                
+                # 使用本地模型路径
                 self.pipe = pipeline(
                     "automatic-speech-recognition",
-                    model=self.model_name,
+                    model=model_path,
                     device=self.device,
                     chunk_length_s=chunk_length_s,
                     return_timestamps=True

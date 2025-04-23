@@ -12,7 +12,7 @@ class SessionManager(QObject):
     sessionChanged = pyqtSignal(bool, str)  # 会话状态改变信号 (已登录, 会话状态消息)
     loginCompleted = pyqtSignal(bool, str)  # 登录完成信号 (成功, 消息)
     
-    def __init__(self, api_base_url="http://localhost:5010"):
+    def __init__(self, api_base_url="http://122.51.47.31:5010"):
         super(SessionManager, self).__init__()
         self.api_base_url = api_base_url
         self.session_token = None
@@ -23,6 +23,7 @@ class SessionManager(QObject):
         self._is_logged_in = False
         self.device_fingerprint = None
         self.card_id = None
+        self.card_key = None
     
     @property
     def is_logged_in(self):
@@ -71,6 +72,7 @@ class SessionManager(QObject):
                 self.current_device_count = result_data.get("current_device_count", 0)
                 self._is_logged_in = True
                 self.card_id = card_id
+                self.card_key = card_key  # 保存card_key以便自动重新登录
                 
                 # 发送信号
                 self.sessionChanged.emit(True, f"已登录 ({self.user_type})")
@@ -121,6 +123,7 @@ class SessionManager(QObject):
         self.max_device_count = 1
         self.current_device_count = 0
         self.card_id = None
+        self.card_key = None
         self._is_logged_in = False
         self.sessionChanged.emit(False, "未登录")
     
@@ -185,17 +188,28 @@ class SessionManager(QObject):
         if not self.is_logged_in:
             return False
             
+        # 确保获取设备指纹
+        if not self.device_fingerprint:
+            self.device_fingerprint = DeviceFingerprint.get_device_fingerprint()
+            
         session_data = {
             "session_token": self.session_token,
             "user_type": self.user_type,
             "expiry_date": self.expiry_date,
             "device_fingerprint": self.device_fingerprint,
-            "card_id": self.card_id
+            "card_id": self.card_id,
+            "card_key": self.card_key,
+            "saved_at": datetime.now().isoformat()
         }
         
         try:
+            # 创建包含目录
+            dir_path = os.path.dirname(os.path.abspath(session_file))
+            os.makedirs(dir_path, exist_ok=True)
+            
             with open(session_file, 'w') as f:
                 json.dump(session_data, f)
+            print(f"会话已保存到: {os.path.abspath(session_file)}")
             return True
         except Exception as e:
             print(f"保存会话失败: {str(e)}")
@@ -204,46 +218,108 @@ class SessionManager(QObject):
     def load_session(self, session_file="session.json"):
         """从文件加载会话信息"""
         if not os.path.exists(session_file):
+            print(f"会话文件不存在: {session_file}")
             return False
             
         try:
             with open(session_file, 'r') as f:
                 session_data = json.load(f)
                 
-            # 验证会话有效性前先设置设备指纹
+            print(f"正在加载会话数据: {session_file}")
+                
+            # 获取保存的设备指纹和卡密信息
             loaded_fingerprint = session_data.get("device_fingerprint")
-            current_fingerprint = DeviceFingerprint.get_device_fingerprint()
+            self.card_id = session_data.get("card_id")
+            self.session_token = session_data.get("session_token")
             
-            # 设备指纹必须匹配
-            if loaded_fingerprint != current_fingerprint:
-                print("加载的会话与当前设备不匹配")
+            if not loaded_fingerprint:
+                print("会话文件中没有设备指纹信息")
                 return False
                 
-            self.session_token = session_data.get("session_token")
-            self.device_fingerprint = loaded_fingerprint
-            self.card_id = session_data.get("card_id")
+            current_fingerprint = DeviceFingerprint.get_device_fingerprint()
+            print(f"当前设备指纹: {current_fingerprint}")
+            print(f"保存的设备指纹: {loaded_fingerprint}")
+            
+            # 如果指纹完全匹配，直接认为是同一设备
+            if loaded_fingerprint == current_fingerprint:
+                print("设备指纹完全匹配")
+                fingerprint_match = True
+            else:
+                # 使用更智能的设备识别方法
+                # 重新获取硬件信息并进行比较
+                hw_info = DeviceFingerprint.get_hardware_info()
+                
+                # 判断关键硬件是否相同 (主板、CPU或磁盘序列号)
+                is_same_device = False
+                
+                # 检查主板信息 (最可靠)
+                mb_info = hw_info.get("motherboard_info", {})
+                mb_serial = mb_info.get("serial")
+                mb_uuid = mb_info.get("uuid")
+                
+                if (mb_serial and mb_serial not in ["", "0", "INVALID", "To be filled by O.E.M."] or
+                    mb_uuid and mb_uuid not in ["", "0", "INVALID"]):
+                    # 主板信息可用且有效，认为是同一设备
+                    is_same_device = True
+                else:
+                    # 检查CPU信息
+                    cpu_info = hw_info.get("cpu_info", {})
+                    if cpu_info.get("processor_id") or cpu_info.get("physical_id"):
+                        is_same_device = True
+                    else:
+                        # 检查磁盘序列号
+                        disk_info = hw_info.get("disk_info", {})
+                        if disk_info.get("serial_numbers") or disk_info.get("uuid"):
+                            is_same_device = True
+                
+                fingerprint_match = is_same_device
+                print(f"设备指纹智能匹配结果: {'通过' if fingerprint_match else '不匹配'}")
+                
+            if not fingerprint_match:
+                print("设备指纹不匹配，需要重新登录")
+                return False
+                
+            # 使用当前的指纹更新保存的值
+            self.device_fingerprint = current_fingerprint
             
             # 验证会话有效性
+            print("验证会话有效性...")
             url = f"{self.api_base_url}/api/validate"
             payload = {"session_token": self.session_token}
             
-            response = requests.post(url, json=payload, timeout=10)
-            data = response.json()
-            
-            if response.status_code == 200 and data.get("success"):
-                # 会话有效
-                result_data = data.get("data", {})
-                self.user_type = result_data.get("user_type")
-                self.expiry_date = result_data.get("expiry_date")
-                self.max_device_count = result_data.get("max_device_count", 1)
-                self.current_device_count = result_data.get("current_device_count", 0)
-                self._is_logged_in = True
+            try:
+                response = requests.post(url, json=payload, timeout=10)
+                data = response.json()
                 
-                # 发送信号
-                self.sessionChanged.emit(True, f"已登录 ({self.user_type})")
-                return True
-            else:
-                # 会话无效
+                if response.status_code == 200 and data.get("success"):
+                    # 会话有效
+                    print("会话验证成功")
+                    result_data = data.get("data", {})
+                    self.user_type = result_data.get("user_type", session_data.get("user_type"))
+                    self.expiry_date = result_data.get("expiry_date", session_data.get("expiry_date"))
+                    self.max_device_count = result_data.get("max_device_count", 1)
+                    self.current_device_count = result_data.get("current_device_count", 0)
+                    self._is_logged_in = True
+                    
+                    # 发送信号
+                    self.sessionChanged.emit(True, f"已登录: {self.card_id}")
+                    return True
+                else:
+                    # 会话无效，但保存了卡密信息
+                    print(f"会话已过期: {data.get('message', '未知错误')}")
+                    
+                    # 如果存在卡密，尝试自动重新登录
+                    if self.card_id and "card_key" in session_data:
+                        print(f"尝试使用保存的卡密自动登录: {self.card_id}")
+                        card_key = session_data.get("card_key", "")
+                        success, message = self.login(self.card_id, card_key)
+                        if success:
+                            print("自动重新登录成功")
+                            return True
+                    
+                    return False
+            except Exception as e:
+                print(f"验证会话失败: {str(e)}")
                 return False
                 
         except Exception as e:

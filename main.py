@@ -1,7 +1,7 @@
 import sys
 import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QTableWidgetItem, QCheckBox, QWidget, QHBoxLayout, QPushButton, QSlider, QSpinBox, QLabel, QHeaderView, QDialog, QVBoxLayout
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QTranslator
 from PyQt5.QtGui import QIcon
 from datetime import datetime
 
@@ -120,34 +120,105 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super(MainWindow, self).__init__()
         
-        # 初始化系统信息检查器
-        self.system_info = SystemInfo()
-        
-        # 初始化模型管理器
-        self.model_manager = ModelManager()
-        
-        # 初始化会话管理器
-        self.session_manager = SessionManager()
-        self.session_manager.sessionChanged.connect(self.on_session_changed)
-        
-        # 预加载的音频分析器
-        self.analyzer = None
-        self.current_model_name = None
-        
         # 设置UI
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
         
-        # 创建并设置模型选择器
+        # 注释掉未实现的样式表加载方法
+        # self.load_stylesheet()
+        
+        # 设置窗口最小尺寸
+        self.setMinimumSize(1000, 600)
+        
+        # 初始化系统信息
+        self.system_info = SystemInfo()
+        
+        # 初始化会话管理器
+        self.init_session_manager()
+        
+        # 初始化模型管理器
+        self.model_manager = ModelManager()
+        
+        # 创建处理模型下载进度队列的定时器
+        self.progress_timer = QTimer(self)
+        self.progress_timer.timeout.connect(self.process_model_progress)
+        self.progress_timer.start(100)  # 每100毫秒处理一次队列
+        
+        # 创建模型选择器
         self.model_selector = ModelSelector(self.model_manager)
         
-        # 将模型选择器添加到转录设置布局中
+        # 添加模型选择器到UI
+        # 检查并设置TranscribeLayout中的modelSelector
         transcribe_layout = self.ui.transcribe_group.layout()
         if transcribe_layout:
-            transcribe_layout.insertWidget(1, self.model_selector)
-            self.ui.modelSelector = self.model_selector
-        else:
-            print("警告: 无法找到转录设置布局")
+            # 查找lblModelName后面的位置
+            for i in range(transcribe_layout.count()):
+                if transcribe_layout.itemAt(i).widget() == self.ui.lblModelName:
+                    # 创建一个容器来持有模型选择器
+                    container = QWidget()
+                    container_layout = QHBoxLayout(container)
+                    container_layout.setContentsMargins(0, 0, 0, 0)
+                    container_layout.addWidget(self.model_selector)
+                    
+                    # 在标签后插入容器
+                    transcribe_layout.insertWidget(i + 1, container)
+                    self.ui.modelSelector = self.model_selector
+                    break
+        
+        # 连接模型选择器信号
+        self.model_selector.modelSelected.connect(self.on_model_selected)
+        self.model_selector.requestDownload.connect(self.download_model)
+        
+        # 初始化音频处理类
+        self.audio_processor = AudioProcessor()
+        
+        # 初始化音频分析类
+        self.audio_analyzer = AudioAnalyzer()
+        
+        # 初始化多语言支持
+        self.translator = QTranslator()
+        
+        # 初始化状态变量
+        self.audio_file = None  # 当前音频文件
+        self.segments = []  # 转录段落
+        self.selected_segments = []  # 已选择的段落
+        self.filtered_segments = None  # 过滤后的段落
+        
+        # 初始化统计数据
+        self.total_segments = 0
+        self.selected_count = 0
+        self.filtered_count = 0
+        
+        # 设置表格
+        self.setup_table()
+        
+        # 设置播放器
+        self.setup_audio_player()
+        
+        # 连接信号和槽
+        self.connect_signals()
+        
+        # 初始化UI状态
+        self.update_ui_state()
+        
+        # 更新系统状态
+        self.update_system_status()
+        
+        # 尝试加载之前的会话
+        self.try_load_session()
+        
+        # 显示登录对话框
+        QTimer.singleShot(100, self.show_login_dialog)
+        
+    # 新方法：处理模型进度队列
+    def process_model_progress(self):
+        """定时处理模型下载进度队列"""
+        self.model_manager.process_progress_updates()
+        
+    def init_session_manager(self):
+        """初始化会话管理器"""
+        self.session_manager = SessionManager()
+        self.session_manager.sessionChanged.connect(self.on_session_changed)
         
         # 添加登录状态显示
         self.login_status_layout = QHBoxLayout()
@@ -190,48 +261,14 @@ class MainWindow(QMainWindow):
         if status_layout:
             status_layout.insertLayout(0, self.login_status_layout)
         
-        # 连接模型选择器信号
-        self.model_selector.modelSelected.connect(self.on_model_selected)
-        self.model_selector.requestDownload.connect(self.download_model)
-        
-        # 更新系统状态摘要
-        self.update_system_status()
-        
-        # 初始状态
-        self.audio_path = None
-        self.extracted_audio_path = None
-        self.transcription = None
-        self.segments = None
-        self.filtered_segments = None
-        self.selected_segments = []
-        
-        # 统计计数
-        self.total_segments = 0
-        self.selected_count = 0
-        self.filtered_count = 0
-        
-        # 设置信号和槽
-        self.setup_connections()
-        
-        # 初始化显示计数
-        self.update_count_display()
-        
-        # 更新UI状态
-        self.setup_ui_state()
-        self.update_step_indicator(1)
-        
-        # 尝试加载会话
-        self.try_load_session()
-        
-        # 登录对话框延迟显示，确保主窗口先显示
-        # 仅在没有有效会话时显示登录对话框
-        if not self.session_manager.is_logged_in:
-            QTimer.singleShot(100, self.show_login_dialog)
-        
     def try_load_session(self):
         """尝试从文件加载会话信息"""
-        if self.session_manager.load_session():
+        success = self.session_manager.load_session()
+        if success:
             print("成功加载会话")
+            
+            # 更新会话状态
+            self.on_session_changed(True, f"已登录: {self.session_manager.card_id}")
             
             # 更新UI状态
             self.update_ui_state()
@@ -285,7 +322,8 @@ class MainWindow(QMainWindow):
         # 连接登录成功信号
         dialog.loginSuccess.connect(self.on_login_success)
         
-        # 显示对话框
+        # 显示对话框并确保它在所有窗口之上
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowStaysOnTopHint)
         dialog.exec_()
     
     def handle_login(self, dialog):
@@ -313,8 +351,11 @@ class MainWindow(QMainWindow):
         # 启用设备列表按钮
         self.btn_device_list.setEnabled(True)
         
-        # 保存会话
+        # 保存会话信息到本地文件
         self.session_manager.save_session()
+        
+        # 更新登录状态显示
+        self.on_session_changed(True, f"已登录: {self.session_manager.card_id}")
     
     def logout(self):
         """用户注销"""
@@ -331,32 +372,154 @@ class MainWindow(QMainWindow):
         dialog = DeviceListDialog(self.session_manager, self)
         dialog.exec_()
     
-    def setup_connections(self):
+    # 新方法：设置表格
+    def setup_table(self):
+        """设置分段结果表格"""
+        # 设置表格列名
+        self.ui.tableSegments.setColumnCount(5)
+        self.ui.tableSegments.setHorizontalHeaderLabels(["选择", "时间", "时长", "内容", "播放"])
+        
+        # 设置表格样式
+        self.ui.tableSegments.setStyleSheet("""
+            QTableWidget {
+                background-color: #222;
+                color: #ddd;
+                gridline-color: #444;
+                border: 1px solid #555;
+                alternate-background-color: #2a2a2a;
+            }
+            QTableWidget::item {
+                padding: 5px;
+                border-bottom: 1px solid #444;
+            }
+            QTableWidget::item:selected {
+                background-color: #345;
+            }
+            QHeaderView::section {
+                background-color: #333;
+                color: #ddd;
+                padding: 5px;
+                border: 1px solid #555;
+                font-weight: bold;
+            }
+            QTableWidget QCheckBox {
+                color: #ddd;
+            }
+        """)
+        
+        # 设置列宽
+        header = self.ui.tableSegments.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)  # 选择列
+        header.setSectionResizeMode(1, QHeaderView.Fixed)  # 时间列
+        header.setSectionResizeMode(2, QHeaderView.Fixed)  # 时长列
+        header.setSectionResizeMode(3, QHeaderView.Stretch)  # 内容列
+        header.setSectionResizeMode(4, QHeaderView.Fixed)  # 操作列
+        
+        # 设置固定列宽
+        self.ui.tableSegments.setColumnWidth(0, 50)  # 选择列
+        self.ui.tableSegments.setColumnWidth(1, 150)  # 时间列
+        self.ui.tableSegments.setColumnWidth(2, 80)   # 时长列
+        self.ui.tableSegments.setColumnWidth(4, 50)   # 操作列
+        
+        # 启用交替行颜色
+        self.ui.tableSegments.setAlternatingRowColors(True)
+        
+        # 启用自动调整行高以适应内容
+        self.ui.tableSegments.setWordWrap(True)
+        
+        # 添加全选按钮和提示标签
+        if not hasattr(self, 'selection_control_widget'):
+            # 创建一个水平布局的Widget来容纳全选按钮和提示
+            self.selection_control_widget = QWidget()
+            selection_layout = QHBoxLayout(self.selection_control_widget)
+            selection_layout.setContentsMargins(5, 5, 5, 5)
+            
+            # 添加全选按钮
+            self.btn_select_all = QPushButton("全选")
+            self.btn_select_all.setFixedWidth(80)
+            self.btn_select_all.setStyleSheet("""
+                QPushButton {
+                    background-color: #3498db;
+                    color: white;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #2980b9;
+                }
+                QPushButton:pressed {
+                    background-color: #1f6aa5;
+                }
+            """)
+            self.btn_select_all.clicked.connect(self.toggle_select_all)
+            selection_layout.addWidget(self.btn_select_all)
+            
+            # 添加帮助提示文本
+            help_label = QLabel("点击可一键选择/取消选择所有行")
+            help_label.setStyleSheet("color: #999; padding-left: 10px;")
+            selection_layout.addWidget(help_label)
+            
+            # 添加弹性空间
+            selection_layout.addStretch(1)
+            
+            # 将控件添加到界面布局
+            segments_layout = self.ui.segments_group.layout()
+            segments_layout.insertWidget(1, self.selection_control_widget)
+    
+    # 新方法：设置播放器
+    def setup_audio_player(self):
+        """设置音频播放器"""
+        # 初始化播放器状态，实际上这里可以为空，
+        # 因为我们使用系统默认播放器播放
+        pass
+        
+    # 新方法：连接信号和槽
+    def connect_signals(self):
+        """连接信号和槽"""
         # 文件选择
         self.ui.btnSelectFile.clicked.connect(self.select_file)
         
         # 转录
         self.ui.btnTranscribe.clicked.connect(self.start_transcription)
         
-        # 过滤
-        self.ui.editFilterKeyword.textChanged.connect(self.apply_filter)
-        self.ui.comboFilterType.currentIndexChanged.connect(self.apply_filter)
-        self.ui.spinMinDuration.valueChanged.connect(self.on_duration_filter_changed)
-        self.ui.spinMaxDuration.valueChanged.connect(self.on_duration_filter_changed)
-        self.ui.btnApplyFilter.clicked.connect(self.apply_all_filters)
+        # 过滤和选择
+        if hasattr(self.ui, 'editFilterKeyword'):
+            self.ui.editFilterKeyword.textChanged.connect(self.apply_filter)
+        
+        if hasattr(self.ui, 'comboFilterType'):
+            self.ui.comboFilterType.currentIndexChanged.connect(self.apply_filter)
+        
+        if hasattr(self.ui, 'spinMinDuration'):
+            self.ui.spinMinDuration.valueChanged.connect(self.on_duration_filter_changed)
+            
+        if hasattr(self.ui, 'spinMaxDuration'):
+            self.ui.spinMaxDuration.valueChanged.connect(self.on_duration_filter_changed)
+        
+        if hasattr(self.ui, 'btnApplyFilter'):
+            self.ui.btnApplyFilter.clicked.connect(self.apply_all_filters)
         
         # 标签状态切换
-        self.ui.radioAll.clicked.connect(lambda: self.show_segments_by_status("all"))
-        self.ui.radioSelected.clicked.connect(lambda: self.show_segments_by_status("selected"))
-        self.ui.radioUnselected.clicked.connect(lambda: self.show_segments_by_status("unselected"))
+        if hasattr(self.ui, 'radioAll'):
+            self.ui.radioAll.clicked.connect(lambda: self.show_segments_by_status("all"))
+            
+        if hasattr(self.ui, 'radioSelected'):
+            self.ui.radioSelected.clicked.connect(lambda: self.show_segments_by_status("selected"))
+            
+        if hasattr(self.ui, 'radioUnselected'):
+            self.ui.radioUnselected.clicked.connect(lambda: self.show_segments_by_status("unselected"))
         
         # 导出
-        self.ui.btnExport.clicked.connect(self.export_selected_segments)
-        self.ui.btnBatchExport.clicked.connect(self.batch_export_segments)
+        if hasattr(self.ui, 'btnExport'):
+            self.ui.btnExport.clicked.connect(self.export_selected_segments)
+            
+        if hasattr(self.ui, 'btnBatchExport'):
+            self.ui.btnBatchExport.clicked.connect(self.batch_export_segments)
         
         # 系统信息
-        self.ui.btnSystemInfo.clicked.connect(self.show_system_info)
-        
+        if hasattr(self.ui, 'btnSystemInfo'):
+            self.ui.btnSystemInfo.clicked.connect(self.show_system_info)
+    
     def setup_ui_state(self):
         """初始化UI状态"""
         # 步骤1：选择文件
@@ -561,14 +724,14 @@ class MainWindow(QMainWindow):
             self.ui.btnSelectFile.setEnabled(True)
         
         # 文件选择状态
-        file_selected = bool(self.audio_path) or bool(self.extracted_audio_path)
+        file_selected = bool(self.audio_file)
         self.ui.btnTranscribe.setEnabled(file_selected)
         
         # 转录设置状态
         self.ui.transcribe_group.setEnabled(file_selected)
         
         # 转录完成状态
-        transcription_done = self.transcription is not None
+        transcription_done = self.segments is not None
         self.ui.segments_group.setEnabled(transcription_done)
         self.ui.export_group.setEnabled(transcription_done and len(self.selected_segments) > 0)
         
@@ -613,7 +776,7 @@ class MainWindow(QMainWindow):
                     self.extract_audio(file_path)
                 else:
                     # 对于音频文件，直接设置路径
-                    self.audio_path = file_path
+                    self.audio_file = file_path
                     self.update_step_indicator(2)
                     self.update_ui_state()
                     print(f"已选择音频文件: {file_path}")
@@ -630,7 +793,7 @@ class MainWindow(QMainWindow):
         self.extract_thread.start()
     
     def on_audio_extracted(self, audio_path):
-        self.extracted_audio_path = audio_path
+        self.audio_file = audio_path
         self.update_ui_state()
         self.setEnabled(True)
     
@@ -643,7 +806,7 @@ class MainWindow(QMainWindow):
             return
         
         # 获取转录参数
-        file_path = self.audio_path or self.extracted_audio_path
+        file_path = self.audio_file
         model_name = self.model_selector.get_current_model()
         language = self.ui.comboLanguage.currentText()
         chunk_length = self.ui.spinChunkLength.value()
@@ -653,19 +816,19 @@ class MainWindow(QMainWindow):
             return
         
         # 检查是否需要初始化或更新analyzer
-        if self.analyzer is None or self.current_model_name != model_name:
+        if self.audio_analyzer is None or self.model_selector.get_current_model() != model_name:
             try:
                 # 显示初始化进度
                 self.update_progress("初始化转录模型...", 0)
                 
                 # 更新当前使用的模型名称
-                self.current_model_name = model_name
+                self.model_selector.set_current_model(model_name)
                 
                 # 创建新的分析器
-                self.analyzer = AudioAnalyzer(model_name=model_name)
+                self.audio_analyzer = AudioAnalyzer(model_name=model_name)
                 
                 # 确保加载模型
-                self.analyzer._ensure_model_loaded(chunk_length_s=chunk_length)
+                self.audio_analyzer._ensure_model_loaded(chunk_length_s=chunk_length)
                 
                 self.update_progress("模型加载完成", 10)
                 # 继续执行转录流程，而不是返回
@@ -679,15 +842,13 @@ class MainWindow(QMainWindow):
         self.ui.progressBar.show()
         
         # 清除旧数据
-        self.transcription = None
         self.segments = None
-        self.filtered_segments = None
         self.selected_segments = []
         self.ui.tableSegments.clearContents()
         self.ui.tableSegments.setRowCount(0)
         
         # 创建并启动转录线程
-        self.transcription_thread = TranscriptionThread(file_path, model_name, language, chunk_length, self.analyzer)
+        self.transcription_thread = TranscriptionThread(file_path, model_name, language, chunk_length, self.audio_analyzer)
         self.transcription_thread.progress_signal.connect(self.update_progress)
         self.transcription_thread.result_signal.connect(self.on_transcription_completed)
         self.transcription_thread.error_signal.connect(self.show_error)
@@ -695,11 +856,7 @@ class MainWindow(QMainWindow):
     
     def on_transcription_completed(self, result):
         """转录完成时的回调"""
-        self.transcription = result
-        
-        # 直接将转录结果设为分段
         self.segments = self.extract_segments(result)
-        self.filtered_segments = None
         self.selected_segments = []
         
         # 初始化计数
@@ -806,6 +963,13 @@ class MainWindow(QMainWindow):
         # 确定当前显示的段落中有多少被选中
         displayed_selected_count = 0
         
+        # 设置基础行高
+        base_row_height = 30
+        self.ui.tableSegments.verticalHeader().setDefaultSectionSize(base_row_height)
+        
+        # 启用行高调整
+        self.ui.tableSegments.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        
         for i, segment in enumerate(segments):
             # 创建操作列（复选框）
             checkbox_widget = QWidget()
@@ -819,8 +983,8 @@ class MainWindow(QMainWindow):
                     spacing: 5px;
                 }
                 QCheckBox::indicator {
-                    width: 20px;
-                    height: 20px;
+                    width: 18px;
+                    height: 18px;
                     border: 2px solid #999;
                     border-radius: 4px;
                 }
@@ -864,9 +1028,13 @@ class MainWindow(QMainWindow):
             duration_text = f"{duration:.1f}s"
             self.ui.tableSegments.setItem(i, 2, self.create_table_item(duration_text))
             
-            # 添加文本内容
+            # 添加文本内容 - 设置为自动换行
             text = segment.get("text", "").strip()
-            self.ui.tableSegments.setItem(i, 3, self.create_table_item(text))
+            content_item = self.create_table_item(text)
+            # 启用自动换行
+            content_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            content_item.setFlags(content_item.flags() | Qt.TextWordWrap)
+            self.ui.tableSegments.setItem(i, 3, content_item)
             
             # 添加操作按钮（播放）
             button_widget = QWidget()
@@ -876,20 +1044,23 @@ class MainWindow(QMainWindow):
             
             play_button = QPushButton()
             play_button.setToolTip("播放此片段")
-            play_button.setFixedSize(30, 30)
-            play_button.setStyleSheet("""
-                QPushButton {
+            # 调整按钮大小以匹配行高
+            button_size = base_row_height - 10  # 留出一些边距
+            play_button.setFixedSize(button_size, button_size)
+            play_button.setStyleSheet(f"""
+                QPushButton {{
                     background-color: #3498db;
-                    border-radius: 15px;
+                    border-radius: {button_size // 2}px;
                     color: white;
                     font-weight: bold;
-                }
-                QPushButton:hover {
+                    font-size: {button_size // 2}px;
+                }}
+                QPushButton:hover {{
                     background-color: #2980b9;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #1f6aa5;
-                }
+                }}
             """)
             # 使用三角形符号表示播放
             play_button.setText("▶")
@@ -985,7 +1156,7 @@ class MainWindow(QMainWindow):
             return
             
         # 检查音频文件是否存在
-        file_path = self.audio_path or self.extracted_audio_path
+        file_path = self.audio_file
         if not file_path or not os.path.exists(file_path):
             self.show_error(f"音频文件不存在: {file_path}")
             return
@@ -1093,7 +1264,8 @@ class MainWindow(QMainWindow):
             # 检查关键词（如果有）
             if filter_type != "过滤模式" and filter_text:
                 text = segment.get("text", "").lower()
-                keywords = [k.strip() for k in filter_text.split(",") if k.strip()]
+                # 同时支持中文逗号和英文逗号作为分隔符
+                keywords = [k.strip() for k in filter_text.replace("，", ",").split(",") if k.strip()]
                 
                 if not keywords:
                     # 没有有效关键词，保留此段
@@ -1181,7 +1353,7 @@ class MainWindow(QMainWindow):
             return
             
         # 获取导出参数
-        source_path = self.audio_path or self.extracted_audio_path
+        source_path = self.audio_file
         output_format = self.ui.comboFormat.currentText()
         output_bitrate = self.ui.comboBitrate.currentText()
         
@@ -1225,7 +1397,7 @@ class MainWindow(QMainWindow):
             return
         
         # 获取导出参数
-        source_path = self.audio_path or self.extracted_audio_path
+        source_path = self.audio_file
         output_format = self.ui.comboFormat.currentText()
         output_bitrate = self.ui.comboBitrate.currentText()
         

@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import (
     QWidget, QComboBox, QPushButton, QHBoxLayout, QVBoxLayout, 
-    QLabel, QProgressBar, QMenu, QAction, QDialog
+    QLabel, QProgressBar, QMenu, QAction, QDialog, QApplication, QMessageBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QIcon, QFont
@@ -96,6 +96,10 @@ class ModelDownloadDialog(QDialog):
                 self.lblInfo.setText("下载完成！可以关闭此窗口。")
             else:
                 self.lblInfo.setText("下载失败，请检查网络连接后重试。")
+                
+        # 强制UI更新
+        self.repaint()
+        QApplication.processEvents()
 
 class ModelSelector(QWidget):
     """自定义的模型选择控件，显示模型下载状态"""
@@ -235,7 +239,15 @@ class ModelSelector(QWidget):
         """更新下载进度"""
         # 更新下载对话框
         if self.download_dialog and model_name == self.current_model:
-            self.download_dialog.update_progress(progress, status_text)
+            # 确保对话框仍然存在且可见
+            if self.download_dialog.isVisible():
+                self.download_dialog.update_progress(progress, status_text)
+            else:
+                # 如果对话框已关闭但下载完成，显示提示
+                if progress == 100:
+                    QMessageBox.information(self, "下载完成", f"模型 {model_name} 已成功下载完成")
+                elif progress == -1:
+                    QMessageBox.warning(self, "下载失败", f"模型 {model_name} 下载失败: {status_text}")
             
         # 更新模型列表
         self.update_model_list()
