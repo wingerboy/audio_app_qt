@@ -263,56 +263,77 @@ class AudioAnalyzer:
             
             return {"segments": processed_segments}
         except Exception as e:
+            import traceback
+            print("转录失败❌",traceback.format_exc())
             raise Exception(f"转录失败: {str(e)}")
 
     def _merge_short_segments(self, chunks, min_duration=2.0, min_chars=15):
-        """合并过短的音频片段，并尝试添加标点符号"""
+        """合并过短的片段，避免过于碎片化的转录结果"""
         if not chunks:
             return []
             
+        # 处理特殊情况：只有一个片段
+        if len(chunks) == 1:
+            return chunks
+        
         merged_chunks = []
         current_chunk = None
         
         for chunk in chunks:
-            # 确保数据格式正确
-            if "timestamp" not in chunk or len(chunk["timestamp"]) < 2:
+            # 跳过无效片段（没有有效的时间戳或文本）
+            if not chunk or "timestamp" not in chunk or "text" not in chunk:
                 continue
                 
-            duration = chunk["timestamp"][1] - chunk["timestamp"][0]
-            text = chunk["text"].strip()
+            # 处理开始或结束时间戳为None的情况
+            start_time = chunk["timestamp"][0] if chunk["timestamp"][0] is not None else 0.0
             
-            # 跳过空文本
-            if not text:
-                continue
+            # 对于结束时间为None的情况，使用开始时间+估计时长
+            if chunk["timestamp"][1] is None:
+                text_length = len(chunk["text"])
+                # 估算：平均每个字符约0.3秒
+                estimated_duration = max(2.0, text_length * 0.3)
+                end_time = start_time + estimated_duration
+                print(f"发现结束时间为None的片段，根据文本长度估算结束时间: {start_time} + {estimated_duration} = {end_time}")
+            else:
+                end_time = chunk["timestamp"][1]
                 
-            # 如果是第一个片段或当前片段足够长/字符数足够多，直接作为新片段
-            if current_chunk is None or duration >= min_duration or len(text) >= min_chars:
-                # 如果当前已有积累的片段，先处理它
-                if current_chunk is not None:
-                    # 尝试添加合适的标点符号
-                    current_chunk["text"] = self._add_punctuation(current_chunk["text"])
-                    merged_chunks.append(current_chunk)
-                
-                # 创建新的当前片段
+            # 计算时长（确保结束时间大于开始时间）
+            duration = max(0, end_time - start_time)
+            
+            text = chunk["text"]
+            
+            # 如果这是第一个片段或者前一个片段已处理完成，则创建新片段
+            if current_chunk is None:
                 current_chunk = {
-                    "timestamp": list(chunk["timestamp"]),
+                    "timestamp": [start_time, end_time],
                     "text": text
                 }
-            else:
-                # 合并到当前片段
-                current_chunk["timestamp"][1] = chunk["timestamp"][1]
-                
-                # 判断是否需要添加空格
-                if not current_chunk["text"].endswith(("，", "。", "？", "！", " ")):
-                    current_chunk["text"] += " "
-                    
-                current_chunk["text"] += text
-        
-        # 处理最后一个片段
-        if current_chunk is not None:
-            current_chunk["text"] = self._add_punctuation(current_chunk["text"])
-            merged_chunks.append(current_chunk)
+                continue
             
+            # 当前片段的时长
+            current_duration = current_chunk["timestamp"][1] - current_chunk["timestamp"][0]
+            current_text_len = len(current_chunk["text"])
+            
+            # 如果当前片段太短，文本太少，则尝试与下一个片段合并
+            if current_duration < min_duration or current_text_len < min_chars:
+                # 合并片段：更新结束时间和文本
+                current_chunk["timestamp"][1] = end_time
+                current_chunk["text"] += " " + text
+            else:
+                # 当前片段足够长，保存并开始新片段
+                merged_chunks.append(current_chunk)
+                current_chunk = {
+                    "timestamp": [start_time, end_time],
+                    "text": text
+                }
+        
+        # 添加最后一个片段（如果有）
+        if current_chunk is not None:
+            merged_chunks.append(current_chunk)
+        
+        # 为输出结果添加调试信息
+        print(f"合并前: {len(chunks)}个片段 -> 合并后: {len(merged_chunks)}个片段")
+        
         return merged_chunks
         
     def _add_punctuation(self, text):

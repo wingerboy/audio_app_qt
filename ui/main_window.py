@@ -12,7 +12,7 @@ class Ui_MainWindow(object):
     def setupUi(self, MainWindow):
         # 设置窗口基本属性
         MainWindow.setWindowTitle("音频内容分析与处理")
-        MainWindow.resize(1600, 1200)
+        MainWindow.resize(1000, 750)
         
         # 中央窗口部件
         central_widget = QWidget()

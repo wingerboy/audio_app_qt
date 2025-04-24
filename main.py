@@ -149,8 +149,9 @@ class MainWindow(QMainWindow):
         # 应用深色主题
         self.apply_dark_stylesheet()
         
-        # 设置窗口最小尺寸 - 缩小到3/4
-        self.setMinimumSize(750, 450)  # 原来是1000, 600
+        # 控制窗口初始大小和最小尺寸
+        self.resize(1080, 750)  # 设置初始窗口大小
+        self.setMinimumSize(750, 450)  # 设置最小尺寸
         
         # 初始化系统信息
         self.system_info = SystemInfo()
@@ -438,19 +439,17 @@ class MainWindow(QMainWindow):
         """)
         
         # 设置列宽
-        header = self.ui.tableSegments.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.Fixed)  # 选择列
-        header.setSectionResizeMode(1, QHeaderView.Fixed)  # 时间列
-        header.setSectionResizeMode(2, QHeaderView.Fixed)  # 时长列
-        header.setSectionResizeMode(3, QHeaderView.Stretch)  # 内容列
-        header.setSectionResizeMode(4, QHeaderView.Fixed)  # 操作列
-        
-        # 设置固定列宽
         table_width = self.ui.tableSegments.width()
-        self.ui.tableSegments.setColumnWidth(0, 50)  # 选择列
-        self.ui.tableSegments.setColumnWidth(1, 50)  # 时间列
-        self.ui.tableSegments.setColumnWidth(2, 80)   # 时长列
-        self.ui.tableSegments.setColumnWidth(4, 50)   # 操作列固定为50，与选择列相同
+        # 选择列 - 紧凑
+        self.ui.tableSegments.setColumnWidth(0, int(table_width * 0.05))
+        # 时间范围 - 固定宽度，足够显示时间
+        self.ui.tableSegments.setColumnWidth(1, int(table_width * 0.15))
+        # 持续时间 - 较窄，只需显示几个数字
+        self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.08))
+        # 播放按钮 - 设置合适宽度使其可见
+        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.04))
+        # 内容列 - 占据剩余空间
+        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.68))
         
         # 启用自动换行和自动调整行高
         self.ui.tableSegments.setWordWrap(True)
@@ -615,11 +614,11 @@ class MainWindow(QMainWindow):
             
         # 初始化列宽
         table_width = self.ui.tableSegments.width()
-        self.ui.tableSegments.setColumnWidth(0, int(table_width * 0.15))
+        self.ui.tableSegments.setColumnWidth(0, int(table_width * 0.05))
         self.ui.tableSegments.setColumnWidth(1, int(table_width * 0.15))
-        self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.10))
-        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.10))
-        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.50))
+        self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.08))
+        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.04))
+        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.68))
         
     def toggle_select_all(self):
         """切换全选/取消全选状态"""
@@ -1064,8 +1063,8 @@ class MainWindow(QMainWindow):
             
             play_button = QPushButton()
             play_button.setToolTip("播放此片段")
-            # 按钮尺寸缩小为原来的2/3
-            button_size = int((base_row_height - 10) * 2/3)  # 原来是base_row_height - 10
+            # 调整按钮大小，避免太小看不清
+            button_size = int(base_row_height - 12)  # 恢复为原始大小，不再缩小
             play_button.setFixedSize(button_size, button_size)
             play_button.setStyleSheet(f"""
                 QPushButton {{
@@ -1073,7 +1072,8 @@ class MainWindow(QMainWindow):
                     border-radius: {button_size // 2}px;
                     color: white;
                     font-weight: bold;
-                    font-size: {button_size // 2}px;
+                    font-size: 14px;
+                    padding: 0px;
                 }}
                 QPushButton:hover {{
                     background-color: #2980b9;
@@ -1082,7 +1082,7 @@ class MainWindow(QMainWindow):
                     background-color: #1f6aa5;
                 }}
             """)
-            # 使用三角形符号表示播放
+            # 使用更明显的播放图标
             play_button.setText("▶")
             play_button.clicked.connect(lambda _, row=i: self.play_segment(row))
             
@@ -1101,11 +1101,10 @@ class MainWindow(QMainWindow):
         self.ui.tableSegments.setColumnWidth(1, int(table_width * 0.15))
         # 持续时间 - 较窄，只需显示几个数字
         self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.08))
-        # 播放按钮 - 设置与选择列相同宽度
-        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.05))
+        # 播放按钮 - 设置合适宽度使其可见
+        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.04))
         # 内容列 - 占据剩余空间
-        # 增加内容列宽度，确保它有足够空间显示换行文本
-        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.67))
+        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.68))
         
         # 强制表格更新布局以正确处理换行
         self.ui.tableSegments.resizeRowsToContents()
