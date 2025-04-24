@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import (
     QWidget, QComboBox, QPushButton, QHBoxLayout, QVBoxLayout, 
     QLabel, QProgressBar, QMenu, QAction, QDialog, QApplication, QMessageBox
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSize
+from PyQt5.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt5.QtGui import QIcon, QFont
 from ui.theme_manager import ThemeManager
 
@@ -98,8 +98,7 @@ class ModelDownloadDialog(QDialog):
             else:
                 self.lblInfo.setText("下载失败，请检查网络连接后重试。")
                 
-        # 强制UI更新
-        self.repaint()
+        # 强制UI更新，但避免频繁处理事件循环导致CPU占用高
         QApplication.processEvents()
 
 class ModelSelector(QWidget):
@@ -165,6 +164,9 @@ class ModelSelector(QWidget):
     
     def update_model_list(self):
         """更新模型列表，显示下载状态"""
+        # 保存当前选择的模型名称
+        current_model = self.current_model
+        
         self.comboModels.clear()
         
         for model in self.model_manager.available_models:
@@ -179,6 +181,13 @@ class ModelSelector(QWidget):
                 display_text = f"⬇ {model} (未下载)"
                 
             self.comboModels.addItem(display_text, model)
+        
+        # 恢复之前的选择
+        if current_model:
+            self.set_selected_model(current_model)
+        
+        # 刷新UI状态
+        QApplication.processEvents()
     
     def get_current_model(self):
         """获取当前选择的模型名称（不含状态标记）"""
@@ -226,13 +235,21 @@ class ModelSelector(QWidget):
             if self.download_dialog.isVisible():
                 self.download_dialog.update_progress(progress, status_text)
             else:
-                # 如果对话框已关闭但下载完成，显示提示
+                # 如果对话框已关闭但下载完成，使用延迟显示消息框避免UI阻塞
                 if progress == 100:
-                    QMessageBox.information(self, "下载完成", f"模型 {model_name} 已成功下载完成")
+                    QTimer.singleShot(500, lambda: QMessageBox.information(self, "下载完成", 
+                                                       f"模型 {model_name} 已成功下载完成"))
                 elif progress == -1:
-                    QMessageBox.warning(self, "下载失败", f"模型 {model_name} 下载失败: {status_text}")
+                    QTimer.singleShot(500, lambda: QMessageBox.warning(self, "下载失败", 
+                                                    f"模型 {model_name} 下载失败: {status_text}"))
             
-        # 更新模型列表
+        # 立即更新下载状态，确保UI显示正确状态
+        if progress == 100:
+            # 确保模型状态被标记为已下载
+            self.model_manager.download_status[model_name]["status"] = "downloaded"
+            self.model_manager.download_status[model_name]["progress"] = 100
+        
+        # 更新模型列表 - 立即刷新UI显示
         self.update_model_list()
         
         # 如果下载完成，启用按钮
@@ -241,6 +258,10 @@ class ModelSelector(QWidget):
             status = self.model_manager.get_model_status(self.current_model)
             self.btnDownload.setEnabled(status["status"] != "downloaded" and status["status"] != "downloading")
             
+            # 如果当前模型下载完成，强制刷新一次UI
+            if model_name == self.current_model and progress == 100:
+                QTimer.singleShot(100, self.update_model_list)
+    
     def set_selected_model(self, model_name):
         """设置当前选择的模型"""
         for i in range(self.comboModels.count()):

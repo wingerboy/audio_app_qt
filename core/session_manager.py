@@ -75,7 +75,7 @@ class SessionManager(QObject):
                 self.card_key = card_key  # 保存card_key以便自动重新登录
                 
                 # 发送信号
-                self.sessionChanged.emit(True, f"已登录 ({self.user_type})（过期时间：{self.expiry_date}）")
+                self.sessionChanged.emit(True, f"已登录 ({self.user_type})")
                 self.loginCompleted.emit(True, "登录成功")
                 return True, "登录成功"
             else:

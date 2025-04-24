@@ -291,7 +291,7 @@ class MainWindow(QMainWindow):
             print("成功加载会话")
             
             # 更新会话状态
-            self.on_session_changed(True, f"已登录: {self.session_manager.card_id}")
+            self.on_session_changed(True, f"已登录: {self.session_manager.card_id}（卡密过期时间：{self.session_manager.expiry_date}）")
             
             # 更新UI状态
             self.update_ui_state()
@@ -1501,9 +1501,20 @@ class MainWindow(QMainWindow):
         # 更新模型选择器中的下载进度
         self.model_selector.update_download_progress(model_name, progress, status_text)
         
+        # 打印进度信息以便调试
+        print(f"模型{model_name}下载进度: {progress}%, 状态: {status_text}")
+        
         # 下载完成后，更新UI状态
         if progress == 100:
+            print(f"模型{model_name}下载完成")
+            # 确保模型状态更新
+            self.model_manager.check_all_models()
+            # 更新UI状态
             self.update_ui_state()
+            
+            # 使用延迟显示消息框，避免阻塞UI线程
+            QTimer.singleShot(500, lambda: QMessageBox.information(self, "下载完成", 
+                                                             f"模型 {model_name} 已成功下载完成！"))
     
     def show_system_info(self):
         """显示系统信息对话框"""

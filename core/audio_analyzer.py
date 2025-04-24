@@ -133,6 +133,7 @@ class AudioAnalyzer:
                 self.pipe = pipeline(
                     "automatic-speech-recognition",
                     model=model_path,
+                    generate_kwargs={"task": "transcribe"},
                     device=self.device,
                     chunk_length_s=chunk_length_s,
                     return_timestamps=True
