@@ -2,6 +2,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                             QLineEdit, QPushButton, QMessageBox, QProgressBar, QFormLayout)
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QIcon, QPixmap, QFont
+from ui.theme_manager import ThemeManager
 
 class LoginDialog(QDialog):
     """登录对话框"""
@@ -93,24 +94,7 @@ class LoginDialog(QDialog):
         self.btnLogin = QPushButton("登录")
         self.btnLogin.setMinimumHeight(35)
         self.btnLogin.setMinimumWidth(100)
-        self.btnLogin.setStyleSheet("""
-            QPushButton {
-                background-color: #6360f5;
-                color: white;
-                border-radius: 3px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #504cc8;
-            }
-            QPushButton:pressed {
-                background-color: #3f3c9e;
-            }
-            QPushButton:disabled {
-                background-color: #aaa;
-                color: #eee;
-            }
-        """)
+        self.btnLogin.setStyleSheet(ThemeManager.get_primary_button_style())
         btn_layout.addWidget(self.btnLogin)
         btn_layout.addStretch()
         

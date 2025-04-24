@@ -3,6 +3,7 @@ from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                           QProgressBar, QMessageBox)
 from PyQt5.QtCore import Qt, QDateTime
 from PyQt5.QtGui import QIcon, QFont, QColor
+from ui.theme_manager import ThemeManager
 
 import json
 from datetime import datetime
@@ -59,32 +60,7 @@ class DeviceListDialog(QDialog):
         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)  # 最近登录时间列
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # 状态列
         
-        # 设置样式 - 使用深色主题
-        self.devices_table.setStyleSheet("""
-            QTableWidget {
-                background-color: #222;
-                color: #ddd;
-                gridline-color: #444;
-                border: 1px solid #555;
-                alternate-background-color: #2a2a2a;
-            }
-            QHeaderView::section {
-                background-color: #333;
-                color: #ddd;
-                padding: 5px;
-                border: 1px solid #555;
-                font-weight: bold;
-            }
-            QTableWidget::item {
-                padding: 5px;
-                border-bottom: 1px solid #444;
-            }
-            QTableWidget::item:selected {
-                background-color: #345;
-            }
-        """)
-        
-        # 启用交替行颜色
+        # 设置表格为深色主题，使用 QtableWidget 的全局样式
         self.devices_table.setAlternatingRowColors(True)
         
         layout.addWidget(self.devices_table)
@@ -94,21 +70,7 @@ class DeviceListDialog(QDialog):
         
         self.refresh_button = QPushButton("刷新列表")
         self.refresh_button.clicked.connect(self.load_devices)
-        self.refresh_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2980b9;
-                color: white;
-                border-radius: 4px;
-                padding: 6px 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #3498db;
-            }
-            QPushButton:pressed {
-                background-color: #1c6ea4;
-            }
-        """)
+        self.refresh_button.setStyleSheet(ThemeManager.get_primary_button_style())
         button_layout.addWidget(self.refresh_button)
         
         button_layout.addStretch()
@@ -116,20 +78,7 @@ class DeviceListDialog(QDialog):
         close_button = QPushButton("关闭")
         close_button.clicked.connect(self.accept)
         close_button.setMinimumWidth(100)
-        close_button.setStyleSheet("""
-            QPushButton {
-                background-color: #7f8c8d;
-                color: white;
-                border-radius: 4px;
-                padding: 6px 14px;
-            }
-            QPushButton:hover {
-                background-color: #95a5a6;
-            }
-            QPushButton:pressed {
-                background-color: #6d7b7c;
-            }
-        """)
+        close_button.setStyleSheet(ThemeManager.get_secondary_button_style())
         button_layout.addWidget(close_button)
         
         layout.addLayout(button_layout)

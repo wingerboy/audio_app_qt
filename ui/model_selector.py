@@ -4,6 +4,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QSize
 from PyQt5.QtGui import QIcon, QFont
+from ui.theme_manager import ThemeManager
 
 class ModelDownloadDialog(QDialog):
     """显示模型下载进度的对话框"""
@@ -149,25 +150,7 @@ class ModelSelector(QWidget):
         # 下载按钮
         self.btnDownload = QPushButton("下载")
         self.btnDownload.setFixedWidth(80)
-        self.btnDownload.setStyleSheet("""
-            QPushButton {
-                background-color: #2980b9;
-                color: white;
-                border-radius: 4px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #3498db;
-            }
-            QPushButton:pressed {
-                background-color: #1c6ea4;
-            }
-            QPushButton:disabled {
-                background-color: #555;
-                color: #888;
-            }
-        """)
+        self.btnDownload.setStyleSheet(ThemeManager.get_primary_button_style())
         self.btnDownload.setEnabled(False)
         self.btnDownload.clicked.connect(self.download_current_model)
         

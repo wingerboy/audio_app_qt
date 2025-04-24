@@ -1,9 +1,25 @@
 import sys
 import os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QMessageBox, QFileDialog, QTableWidgetItem, QCheckBox, QWidget, QHBoxLayout, QPushButton, QSlider, QSpinBox, QLabel, QHeaderView, QDialog, QVBoxLayout
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QTranslator
-from PyQt5.QtGui import QIcon
+import time
+import json
+import logging
+import shutil
+import platform
+import traceback
 from datetime import datetime
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel,
+    QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView,
+    QCheckBox, QComboBox, QFileDialog, QMessageBox, QProgressBar, QRadioButton,
+    QButtonGroup, QSpinBox, QGroupBox, QStyle, QAction, QStatusBar, QMenu,
+    QToolButton, QDoubleSpinBox, QSizePolicy, QFrame, QSlider
+)
+from PyQt5.QtCore import (
+    Qt, QThread, pyqtSignal, QUrl, QSize, QSettings, QPoint, QRect, QTimer,
+    QLocale, QTranslator, QLibraryInfo, QCoreApplication
+)
+from PyQt5.QtGui import QIcon, QColor, QFont, QDesktopServices, QPalette, QPixmap
+from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
 
 from ui.main_window import Ui_MainWindow
 from ui.model_selector import ModelSelector
@@ -15,6 +31,8 @@ from core.audio_processor import AudioProcessor
 from core.model_manager import ModelManager
 from core.system_info import SystemInfo
 from core.session_manager import SessionManager
+from ui.range_slider import RangeSlider
+from ui.theme_manager import ThemeManager
 
 class TranscriptionThread(QThread):
     """Thread for running transcription in background"""
@@ -124,8 +142,8 @@ class MainWindow(QMainWindow):
         self.ui = Ui_MainWindow()
         self.ui.setupUi(self)
         
-        # 注释掉未实现的样式表加载方法
-        # self.load_stylesheet()
+        # 应用深色主题
+        self.apply_dark_stylesheet()
         
         # 设置窗口最小尺寸
         self.setMinimumSize(1000, 600)
@@ -209,6 +227,11 @@ class MainWindow(QMainWindow):
         
         # 显示登录对话框
         QTimer.singleShot(100, self.show_login_dialog)
+        
+    def apply_dark_stylesheet(self):
+        """应用深色模式样式表"""
+        # 使用 ThemeManager 应用统一的深色主题
+        ThemeManager.apply_dark_theme()
         
     # 新方法：处理模型进度队列
     def process_model_progress(self):
@@ -1556,7 +1579,12 @@ def main():
     # 设置样式
     app.setStyle("Fusion")
     
+    # 创建主窗口
     window = MainWindow()
+    
+    # 应用深色主题
+    window.apply_dark_stylesheet()
+    
     window.show()
     sys.exit(app.exec_())
 

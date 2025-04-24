@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QTextBrowser, QTabWidget, QWidget, QHBoxLayout
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QFont
+from ui.theme_manager import ThemeManager
 
 class SystemInfoDialog(QDialog):
     """系统环境信息对话框"""
@@ -84,11 +85,14 @@ class SystemInfoDialog(QDialog):
         
         # 底部按钮
         button_layout = QHBoxLayout()
-        close_button = QPushButton("关闭")
-        close_button.clicked.connect(self.accept)
         
         refresh_button = QPushButton("刷新信息")
         refresh_button.clicked.connect(self._refresh_info)
+        refresh_button.setStyleSheet(ThemeManager.get_primary_button_style())
+        
+        close_button = QPushButton("关闭")
+        close_button.clicked.connect(self.accept)
+        close_button.setStyleSheet(ThemeManager.get_secondary_button_style())
         
         button_layout.addWidget(refresh_button)
         button_layout.addStretch(1)
