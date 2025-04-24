@@ -138,7 +138,7 @@ class Ui_MainWindow(object):
         
         self.spinChunkLength = QSpinBox()
         self.spinChunkLength.setRange(5, 30)
-        self.spinChunkLength.setValue(10)
+        self.spinChunkLength.setValue(30)
         self.spinChunkLength.setSuffix(" 秒")
         self.spinChunkLength.setFixedWidth(80)
         self.spinChunkLength.setStyleSheet("""

@@ -110,6 +110,18 @@ class ModelSelector(QWidget):
     # 当请求下载模型时发出的信号
     requestDownload = pyqtSignal(str)
     
+    # 模型名称映射：技术名称 -> 用户友好名称
+    MODEL_DISPLAY_NAMES = {
+        "openai/whisper-tiny": "快速识别 (轻量版)",
+        "openai/whisper-base": "标准识别 (基础版)",
+        "openai/whisper-small": "高质量识别 (增强版)",
+        "openai/whisper-medium": "专业识别 (高级版)",
+        "openai/whisper-large": "超高精度识别 (旗舰版)"
+    }
+    
+    # 反向映射：用户友好名称 -> 技术名称
+    MODEL_TECHNICAL_NAMES = {v: k for k, v in MODEL_DISPLAY_NAMES.items()}
+    
     def __init__(self, model_manager, parent=None):
         super(ModelSelector, self).__init__(parent)
         
@@ -162,6 +174,10 @@ class ModelSelector(QWidget):
         # 连接信号
         self.comboModels.currentIndexChanged.connect(self.on_model_changed)
     
+    def get_display_name(self, model_name):
+        """获取模型的显示名称"""
+        return self.MODEL_DISPLAY_NAMES.get(model_name, model_name)
+    
     def update_model_list(self):
         """更新模型列表，显示下载状态"""
         # 保存当前选择的模型名称
@@ -172,13 +188,16 @@ class ModelSelector(QWidget):
         for model in self.model_manager.available_models:
             status = self.model_manager.get_model_status(model)
             
+            # 获取友好显示名称
+            display_name = self.get_display_name(model)
+            
             # 根据下载状态显示不同文本
             if status["status"] == "downloaded":
-                display_text = f"✓ {model}"
+                display_text = f"✓ {display_name}"
             elif status["status"] == "downloading":
-                display_text = f"⏳ {model} ({status['progress']}%)"
+                display_text = f"⏳ {display_name} ({status['progress']}%)"
             else:
-                display_text = f"⬇ {model} (未下载)"
+                display_text = f"⬇ {display_name}"
                 
             self.comboModels.addItem(display_text, model)
         
@@ -218,8 +237,11 @@ class ModelSelector(QWidget):
         # 禁用下载按钮
         self.btnDownload.setEnabled(False)
         
+        # 获取友好显示名称用于对话框显示
+        display_name = self.get_display_name(self.current_model)
+        
         # 创建并显示下载对话框
-        self.download_dialog = ModelDownloadDialog(self.current_model, self)
+        self.download_dialog = ModelDownloadDialog(display_name, self)
         
         # 发出下载请求信号
         self.requestDownload.emit(self.current_model)
@@ -236,12 +258,13 @@ class ModelSelector(QWidget):
                 self.download_dialog.update_progress(progress, status_text)
             else:
                 # 如果对话框已关闭但下载完成，使用延迟显示消息框避免UI阻塞
+                display_name = self.get_display_name(model_name)
                 if progress == 100:
                     QTimer.singleShot(500, lambda: QMessageBox.information(self, "下载完成", 
-                                                       f"模型 {model_name} 已成功下载完成"))
+                                                       f"模型 {display_name} 已成功下载完成"))
                 elif progress == -1:
                     QTimer.singleShot(500, lambda: QMessageBox.warning(self, "下载失败", 
-                                                    f"模型 {model_name} 下载失败: {status_text}"))
+                                                    f"模型 {display_name} 下载失败: {status_text}"))
             
         # 立即更新下载状态，确保UI显示正确状态
         if progress == 100:

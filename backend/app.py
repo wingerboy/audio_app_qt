@@ -90,7 +90,7 @@ DB_CONFIG = {
     'host': 'obmt6nn1aqdr2nb4-mi.aliyun-cn-hangzhou-internet.oceanbase.cloud',
     'port': 3306,
     'user': 'wingerboy',
-    'password': 'LI',
+    'password': 'LIUyawen__12',
     'db': 'audio_app_offline',
     'charset': 'utf8mb4',
     'cursorclass': DictCursor

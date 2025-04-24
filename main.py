@@ -40,13 +40,15 @@ class TranscriptionThread(QThread):
     result_signal = pyqtSignal(dict)
     error_signal = pyqtSignal(str)
     
-    def __init__(self, file_path, model_name, language, chunk_length, analyzer=None):
+    def __init__(self, file_path, model_name, language, chunk_length, analyzer=None, min_sentence_length=1, max_sentence_length=30):
         super().__init__()
         self.file_path = file_path
         self.model_name = model_name
         self.language = language
         self.chunk_length = chunk_length
         self.analyzer = analyzer
+        self.min_sentence_length = min_sentence_length
+        self.max_sentence_length = max_sentence_length
         
     def run(self):
         try:
@@ -62,7 +64,9 @@ class TranscriptionThread(QThread):
             result = analyzer.transcribe(
                 self.file_path, 
                 chunk_length=self.chunk_length, 
-                language=self.language
+                language=self.language,
+                min_sentence_length=self.min_sentence_length,
+                max_sentence_length=self.max_sentence_length
             )
             
             self.progress_signal.emit("转录完成", 100)
@@ -145,8 +149,8 @@ class MainWindow(QMainWindow):
         # 应用深色主题
         self.apply_dark_stylesheet()
         
-        # 设置窗口最小尺寸
-        self.setMinimumSize(1000, 600)
+        # 设置窗口最小尺寸 - 缩小到3/4
+        self.setMinimumSize(750, 450)  # 原来是1000, 600
         
         # 初始化系统信息
         self.system_info = SystemInfo()
@@ -186,6 +190,9 @@ class MainWindow(QMainWindow):
         # 连接模型选择器信号
         self.model_selector.modelSelected.connect(self.on_model_selected)
         self.model_selector.requestDownload.connect(self.download_model)
+        
+        # 添加句子长度范围控制组件 - 直接在转录布局中添加
+        self.add_sentence_range_controls()
         
         # 初始化音频处理类
         self.audio_processor = AudioProcessor()
@@ -439,16 +446,18 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(4, QHeaderView.Fixed)  # 操作列
         
         # 设置固定列宽
+        table_width = self.ui.tableSegments.width()
         self.ui.tableSegments.setColumnWidth(0, 50)  # 选择列
-        self.ui.tableSegments.setColumnWidth(1, 150)  # 时间列
+        self.ui.tableSegments.setColumnWidth(1, 50)  # 时间列
         self.ui.tableSegments.setColumnWidth(2, 80)   # 时长列
-        self.ui.tableSegments.setColumnWidth(4, 50)   # 操作列
+        self.ui.tableSegments.setColumnWidth(4, 50)   # 操作列固定为50，与选择列相同
+        
+        # 启用自动换行和自动调整行高
+        self.ui.tableSegments.setWordWrap(True)
+        self.ui.tableSegments.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         
         # 启用交替行颜色
         self.ui.tableSegments.setAlternatingRowColors(True)
-        
-        # 启用自动调整行高以适应内容
-        self.ui.tableSegments.setWordWrap(True)
         
         # 添加全选按钮和提示标签
         if not hasattr(self, 'selection_control_widget'):
@@ -564,47 +573,10 @@ class MainWindow(QMainWindow):
         header = self.ui.tableSegments.horizontalHeader()
         header.setSectionsClickable(True)
         
-        # 添加全选按钮和提示标签
-        if not hasattr(self, 'selection_control_widget'):
-            # 创建一个水平布局的Widget来容纳全选按钮和提示
-            self.selection_control_widget = QWidget()
-            selection_layout = QHBoxLayout(self.selection_control_widget)
-            selection_layout.setContentsMargins(5, 5, 5, 5)
-            
-            # 添加全选按钮
-            self.btn_select_all = QPushButton("全选")
-            self.btn_select_all.setFixedWidth(80)
-            self.btn_select_all.setStyleSheet("""
-                QPushButton {
-                    background-color: #3498db;
-                    color: white;
-                    border-radius: 4px;
-                    padding: 4px 8px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #2980b9;
-                }
-                QPushButton:pressed {
-                    background-color: #1f6aa5;
-                }
-            """)
-            self.btn_select_all.clicked.connect(self.toggle_select_all)
-            selection_layout.addWidget(self.btn_select_all)
-            
-            # 添加帮助提示文本
-            help_label = QLabel("点击可一键选择/取消选择所有行")
-            help_label.setStyleSheet("color: #999; padding-left: 10px;")
-            selection_layout.addWidget(help_label)
-            
-            # 添加弹性空间
-            selection_layout.addStretch(1)
-            
-            # 将控件添加到界面布局
-            segments_layout = self.ui.segments_group.layout()
-            segments_layout.insertWidget(1, self.selection_control_widget)
+        # 修改表格样式，确保行高适应内容
+        self.ui.tableSegments.verticalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         
-        # 修改表格样式，使行更清晰
+        # 确保表格字体和行高适应更小的窗口
         self.ui.tableSegments.setStyleSheet("""
             QTableWidget {
                 background-color: #222;
@@ -612,9 +584,10 @@ class MainWindow(QMainWindow):
                 gridline-color: #444;
                 border: 1px solid #555;
                 alternate-background-color: #2a2a2a;
+                font-size: 10pt;
             }
             QTableWidget::item {
-                padding: 5px;
+                padding: 4px;
                 border-bottom: 1px solid #444;
             }
             QTableWidget::item:selected {
@@ -623,9 +596,10 @@ class MainWindow(QMainWindow):
             QHeaderView::section {
                 background-color: #333;
                 color: #ddd;
-                padding: 5px;
+                padding: 4px;
                 border: 1px solid #555;
                 font-weight: bold;
+                font-size: 10pt;
             }
             QTableWidget QCheckBox {
                 color: #ddd;
@@ -641,11 +615,11 @@ class MainWindow(QMainWindow):
             
         # 初始化列宽
         table_width = self.ui.tableSegments.width()
-        self.ui.tableSegments.setColumnWidth(0, int(table_width * 0.05))
+        self.ui.tableSegments.setColumnWidth(0, int(table_width * 0.15))
         self.ui.tableSegments.setColumnWidth(1, int(table_width * 0.15))
-        self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.08))
-        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.05))
-        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.67))
+        self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.10))
+        self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.10))
+        self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.50))
         
     def toggle_select_all(self):
         """切换全选/取消全选状态"""
@@ -834,6 +808,15 @@ class MainWindow(QMainWindow):
         language = self.ui.comboLanguage.currentText()
         chunk_length = self.ui.spinChunkLength.value()
         
+        # 获取句子长度范围
+        min_sentence_length = self.spinMinLength.value()
+        max_sentence_length = self.spinMaxLength.value()
+        
+        # 确保最小值不大于最大值
+        if min_sentence_length > max_sentence_length:
+            min_sentence_length = max_sentence_length
+            self.spinMinLength.setValue(min_sentence_length)
+        
         if not file_path:
             QMessageBox.warning(self, "错误", "请先选择音频文件")
             return
@@ -871,7 +854,15 @@ class MainWindow(QMainWindow):
         self.ui.tableSegments.setRowCount(0)
         
         # 创建并启动转录线程
-        self.transcription_thread = TranscriptionThread(file_path, model_name, language, chunk_length, self.audio_analyzer)
+        self.transcription_thread = TranscriptionThread(
+            file_path, 
+            model_name, 
+            language, 
+            chunk_length, 
+            self.audio_analyzer,
+            min_sentence_length,
+            max_sentence_length
+        )
         self.transcription_thread.progress_signal.connect(self.update_progress)
         self.transcription_thread.result_signal.connect(self.on_transcription_completed)
         self.transcription_thread.error_signal.connect(self.show_error)
@@ -997,27 +988,30 @@ class MainWindow(QMainWindow):
             # 创建操作列（复选框）
             checkbox_widget = QWidget()
             checkbox_layout = QHBoxLayout(checkbox_widget)
-            checkbox_layout.setContentsMargins(5, 5, 5, 5)
+            # 缩小内边距使复选框更小
+            checkbox_layout.setContentsMargins(3, 3, 3, 3)  # 从原来的5,5,5,5缩小
             checkbox_layout.setAlignment(Qt.AlignCenter)
             
             checkbox = QCheckBox()
-            checkbox.setStyleSheet("""
-                QCheckBox {
-                    spacing: 5px;
-                }
-                QCheckBox::indicator {
-                    width: 18px;
-                    height: 18px;
-                    border: 2px solid #999;
-                    border-radius: 4px;
-                }
-                QCheckBox::indicator:unchecked {
+            # 缩小复选框大小为原来的3/5
+            checkbox_size = int(18 * 3/5)  # 原来是18px
+            checkbox.setStyleSheet(f"""
+                QCheckBox {{
+                    spacing: 3px;  /* 缩小间距 */
+                }}
+                QCheckBox::indicator {{
+                    width: {checkbox_size}px;
+                    height: {checkbox_size}px;
+                    border: 1px solid #999;
+                    border-radius: 3px;
+                }}
+                QCheckBox::indicator:unchecked {{
                     background-color: #444;
-                }
-                QCheckBox::indicator:checked {
+                }}
+                QCheckBox::indicator:checked {{
                     background-color: #3498db;
                     border-color: #2980b9;
-                }
+                }}
             """)
             
             # 根据显示模式设置复选框状态
@@ -1054,21 +1048,24 @@ class MainWindow(QMainWindow):
             # 添加文本内容 - 设置为自动换行
             text = segment.get("text", "").strip()
             content_item = self.create_table_item(text)
-            # 启用自动换行
+            # 强制启用自动换行
             content_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
             content_item.setFlags(content_item.flags() | Qt.TextWordWrap)
+            # 明确设置文本格式，确保换行生效
+            self.ui.tableSegments.setWordWrap(True)
             self.ui.tableSegments.setItem(i, 3, content_item)
             
             # 添加操作按钮（播放）
             button_widget = QWidget()
             button_layout = QHBoxLayout(button_widget)
-            button_layout.setContentsMargins(3, 3, 3, 3)
+            # 缩小内边距
+            button_layout.setContentsMargins(2, 2, 2, 2)  # 从原来的3,3,3,3缩小
             button_layout.setAlignment(Qt.AlignCenter)
             
             play_button = QPushButton()
             play_button.setToolTip("播放此片段")
-            # 调整按钮大小以匹配行高
-            button_size = base_row_height - 10  # 留出一些边距
+            # 按钮尺寸缩小为原来的2/3
+            button_size = int((base_row_height - 10) * 2/3)  # 原来是base_row_height - 10
             play_button.setFixedSize(button_size, button_size)
             play_button.setStyleSheet(f"""
                 QPushButton {{
@@ -1104,11 +1101,14 @@ class MainWindow(QMainWindow):
         self.ui.tableSegments.setColumnWidth(1, int(table_width * 0.15))
         # 持续时间 - 较窄，只需显示几个数字
         self.ui.tableSegments.setColumnWidth(2, int(table_width * 0.08))
-        # 播放按钮 - 固定宽度，仅容纳按钮
+        # 播放按钮 - 设置与选择列相同宽度
         self.ui.tableSegments.setColumnWidth(4, int(table_width * 0.05))
         # 内容列 - 占据剩余空间
-        # 内容列显式设置较大宽度，确保它获得足够空间
+        # 增加内容列宽度，确保它有足够空间显示换行文本
         self.ui.tableSegments.setColumnWidth(3, int(table_width * 0.67))
+        
+        # 强制表格更新布局以正确处理换行
+        self.ui.tableSegments.resizeRowsToContents()
         
         # 更新全选按钮文本
         if hasattr(self, 'btn_select_all'):
@@ -1357,10 +1357,20 @@ class MainWindow(QMainWindow):
             if self.filtered_segments is not None:
                 # 筛选出在filtered中但不在selected中的片段
                 filtered_unselected = [s for s in self.filtered_segments if s not in self.selected_segments]
-                self.display_segments(filtered_unselected, "unselected")
+                if filtered_unselected:
+                    self.display_segments(filtered_unselected, "unselected")
+                else:
+                    # 没有未选择的片段，显示空表格
+                    self.ui.tableSegments.setRowCount(0)
+                    self.update_count_display()
             else:
                 unselected_segments = [s for s in self.segments if s not in self.selected_segments]
-                self.display_segments(unselected_segments, "unselected")
+                if unselected_segments:
+                    self.display_segments(unselected_segments, "unselected")
+                else:
+                    # 没有未选择的片段，显示空表格
+                    self.ui.tableSegments.setRowCount(0)
+                    self.update_count_display()
     
     def export_selected_segments(self):
         """导出选中的音频片段"""
@@ -1512,9 +1522,12 @@ class MainWindow(QMainWindow):
             # 更新UI状态
             self.update_ui_state()
             
+            # 使用友好的模型显示名称
+            display_name = self.model_selector.get_display_name(model_name)
+            
             # 使用延迟显示消息框，避免阻塞UI线程
             QTimer.singleShot(500, lambda: QMessageBox.information(self, "下载完成", 
-                                                             f"模型 {model_name} 已成功下载完成！"))
+                                                             f"模型 {display_name} 已成功下载完成！"))
     
     def show_system_info(self):
         """显示系统信息对话框"""
@@ -1584,6 +1597,102 @@ class MainWindow(QMainWindow):
         self.ui.lblStatSelected.setText(f"已选择: {selected}")
         self.ui.lblStatUnselected.setText(f"未选择: {unselected}")
     
+    def on_sentence_range_changed(self):
+        """当句子长度范围发生变化时调用"""
+        # 获取新的最小值和最大值
+        min_length = self.spinMinLength.value()
+        max_length = self.spinMaxLength.value()
+        
+        # 更新UI状态
+        self.update_ui_state()
+    
+    def add_sentence_range_controls(self):
+        """添加句子长度范围控制组件到转录面板"""
+        transcribe_layout = self.ui.transcribe_group.layout()
+        if not transcribe_layout:
+            return
+            
+        # 创建带标签的控件组
+        sentence_range_widget = QWidget()
+        sentence_range_layout = QHBoxLayout(sentence_range_widget)
+        sentence_range_layout.setContentsMargins(0, 5, 0, 5)  # 上下添加一点间距
+        
+        # 添加标签
+        sentence_range_label = QLabel("句子长度范围:")
+        sentence_range_label.setStyleSheet("color: #ddd;")
+        sentence_range_layout.addWidget(sentence_range_label)
+        
+        # 添加最小值控件
+        self.spinMinLength = QSpinBox()
+        self.spinMinLength.setMinimum(1)
+        self.spinMinLength.setMaximum(30)
+        self.spinMinLength.setValue(3)  # 默认最小值3秒
+        self.spinMinLength.setSuffix(" 秒")
+        self.spinMinLength.setFixedWidth(60)
+        self.spinMinLength.setStyleSheet("""
+            QSpinBox {
+                background-color: #444;
+                color: #ddd;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px;
+            }
+        """)
+        sentence_range_layout.addWidget(self.spinMinLength)
+        
+        # 添加分隔标签
+        range_separator = QLabel("至")
+        range_separator.setStyleSheet("color: #ddd;")
+        sentence_range_layout.addWidget(range_separator)
+        
+        # 添加最大值控件
+        self.spinMaxLength = QSpinBox()
+        self.spinMaxLength.setMinimum(2)
+        self.spinMaxLength.setMaximum(60)
+        self.spinMaxLength.setValue(10)  # 默认最大值10秒
+        self.spinMaxLength.setSuffix(" 秒")
+        self.spinMaxLength.setFixedWidth(60)
+        self.spinMaxLength.setStyleSheet("""
+            QSpinBox {
+                background-color: #444;
+                color: #ddd;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 2px;
+            }
+        """)
+        sentence_range_layout.addWidget(self.spinMaxLength)
+        
+        # 添加弹性空间，确保控件紧凑对齐
+        sentence_range_layout.addStretch(1)
+        
+        # 插入到布局中合适的位置 - 查找分段长度控件的位置
+        for i in range(transcribe_layout.count()):
+            widget = transcribe_layout.itemAt(i).widget()
+            if widget and widget == self.ui.spinChunkLength:
+                # 在分段长度控件后添加
+                transcribe_layout.insertWidget(i + 1, sentence_range_widget)
+                break
+        else:
+            # 如果没找到，就加到布局最后（但在转录按钮前）
+            btnTranscribe_index = -1
+            for i in range(transcribe_layout.count()):
+                widget = transcribe_layout.itemAt(i).widget()
+                if widget and widget == self.ui.btnTranscribe:
+                    btnTranscribe_index = i
+                    break
+            
+            if btnTranscribe_index != -1:
+                transcribe_layout.insertWidget(btnTranscribe_index, sentence_range_widget)
+            else:
+                # 实在找不到位置，就直接添加到布局最后
+                transcribe_layout.addWidget(sentence_range_widget)
+        
+        # 连接最小值变化信号
+        self.spinMinLength.valueChanged.connect(self.on_sentence_range_changed)
+        # 连接最大值变化信号
+        self.spinMaxLength.valueChanged.connect(self.on_sentence_range_changed)
+
 def main():
     app = QApplication(sys.argv)
     

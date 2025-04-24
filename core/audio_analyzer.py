@@ -142,7 +142,7 @@ class AudioAnalyzer:
                 # 提供更详细的错误信息
                 raise Exception(f"模型加载失败({self.model_name}): {str(e)}")
     
-    def transcribe(self, audio_path, chunk_length=10, language=None):
+    def transcribe(self, audio_path, chunk_length=10, language=None, min_sentence_length=3, max_sentence_length=10):
         """
         Transcribe audio file using Whisper
         
@@ -150,6 +150,8 @@ class AudioAnalyzer:
             audio_path: Path to audio file
             chunk_length: Length of audio chunks to process in seconds
             language: Language of the audio (optional)
+            min_sentence_length: Minimum sentence length in seconds (default: 3s)
+            max_sentence_length: Maximum sentence length in seconds (default: 10s)
         
         Returns:
             Transcription with segments
@@ -245,7 +247,21 @@ class AudioAnalyzer:
                     "text": result.get("text", "")
                 })
             
-            return {"segments": segments}
+            # 使用find_sentence_breaks处理段落，根据语义分割成更合理的句子片段
+            print(f"使用句子长度范围 {min_sentence_length}s - {max_sentence_length}s 切分语音片段")
+            
+            # 创建带segments的字典结构
+            transcription = {"segments": segments}
+            
+            # 根据指定的句子长度范围处理片段
+            processed_segments = self.find_sentence_breaks(
+                transcription,
+                max_interval=max_sentence_length,
+                min_interval=min_sentence_length,
+                preserve_sentences=True
+            )
+            
+            return {"segments": processed_segments}
         except Exception as e:
             raise Exception(f"转录失败: {str(e)}")
 
@@ -437,39 +453,87 @@ class AudioAnalyzer:
                 potential_end = segment["end"]
                 potential_length = potential_end - current_segment_start
                 
-                # 如果加入后长度仍小于最小区间，或者未达到最大区间，继续加入
-                if potential_length < min_interval or (len(current_segment_texts) > 0 and potential_length <= max_interval):
+                # ---------- 严格优化的逻辑 ----------
+                # 如果当前片段长度小于最小区间要求，则必须继续添加
+                if potential_length < min_interval:
+                    # 不够最小长度，强制添加这个片段
                     current_segment_texts.append(segment["text"])
                     current_segment_end = segment["end"]
                     current_pos = segment["end"]
-                else:
-                    # 如果已经有内容且长度超过最大区间，完成当前片段
-                    if len(current_segment_texts) > 0:
-                        segment_length = current_segment_end - current_segment_start
-                        if segment_length >= min_interval:
-                            segments.append({
-                                "start": current_segment_start,
-                                "end": current_segment_end,
-                                "text": " ".join(current_segment_texts)
-                            })
-                            print(f"创建片段: {current_segment_start:.2f}s - {current_segment_end:.2f}s，长度: {segment_length:.2f}s")
+                    continue
+                
+                # 当片段长度已满足最小区间要求
+                if current_segment_texts:  # 确保有内容
+                    # 先添加当前片段
+                    current_segment_texts.append(segment["text"])
+                    current_segment_end = segment["end"]
+                    current_segment_length = current_segment_end - current_segment_start
                     
-                    # 开始新片段
+                    # 现在长度肯定已经达到最小值，直接创建片段
+                    segments.append({
+                        "start": current_segment_start,
+                        "end": current_segment_end,
+                        "text": " ".join(current_segment_texts)
+                    })
+                    print(f"创建片段: {current_segment_start:.2f}s - {current_segment_end:.2f}s，长度: {current_segment_length:.2f}s")
+                    
+                    # 重置当前片段状态，准备下一个片段
+                    current_segment_texts = []
+                    current_segment_start = current_segment_end  # 从上一个片段结束处开始
+                    current_segment_end = current_segment_end
+                    current_pos = current_segment_end
+                else:
+                    # 如果当前没有累积的文本（可能是初始状态或刚创建了一个片段）
+                    # 而这个片段本身就满足最小长度要求，直接创建一个新片段
                     current_segment_texts = [segment["text"]]
                     current_segment_start = segment["start"]
                     current_segment_end = segment["end"]
-                    current_pos = segment["end"]
+                    current_segment_length = current_segment_end - current_segment_start
+                    
+                    if current_segment_length >= min_interval:
+                        segments.append({
+                            "start": current_segment_start,
+                            "end": current_segment_end,
+                            "text": " ".join(current_segment_texts)
+                        })
+                        print(f"创建单段片段: {current_segment_start:.2f}s - {current_segment_end:.2f}s，长度: {current_segment_length:.2f}s")
+                        
+                        # 重置当前片段状态
+                        current_segment_texts = []
+                        current_segment_start = current_segment_end
+                        current_segment_end = current_segment_end
+                    
+                    current_pos = current_segment_end
             
-            # 添加最后一个片段（如果有）
-            if len(current_segment_texts) > 0:
+            # 处理最后一个片段（如果有）
+            if current_segment_texts:
                 segment_length = current_segment_end - current_segment_start
-                if segment_length >= min_interval:
+                if segment_length >= min_interval:  # 确保满足最小长度要求
                     segments.append({
                         "start": current_segment_start,
                         "end": current_segment_end,
                         "text": " ".join(current_segment_texts)
                     })
                     print(f"创建最后片段: {current_segment_start:.2f}s - {current_segment_end:.2f}s，长度: {segment_length:.2f}s")
+                else:
+                    # 如果最后一个片段不满足最小长度要求，尝试与前一个片段合并
+                    if segments:
+                        last_segment = segments.pop()
+                        merged_segment = {
+                            "start": last_segment["start"],
+                            "end": current_segment_end,
+                            "text": last_segment["text"] + " " + " ".join(current_segment_texts)
+                        }
+                        segments.append(merged_segment)
+                        print(f"最后片段过短，已合并至前一片段: {merged_segment['start']:.2f}s - {merged_segment['end']:.2f}s")
+                    else:
+                        # 如果没有前一个片段可合并，又不满足最小长度，仍然保留它
+                        print(f"警告: 最后片段长度({segment_length:.2f}s)小于最小区间({min_interval}s)，但没有前一片段可合并，保留此片段")
+                        segments.append({
+                            "start": current_segment_start,
+                            "end": current_segment_end,
+                            "text": " ".join(current_segment_texts)
+                        })
             
             # 如果分段结果为空但有有效转录，则将整个音频作为一个片段
             if not segments and valid_whisper_segments:
@@ -480,17 +544,24 @@ class AudioAnalyzer:
                     "text": " ".join([s["text"] for s in valid_whisper_segments])
                 }]
             
-            # 最终验证所有片段，确保长度符合要求
+            # 验证所有片段，确保长度符合要求
             valid_segments = []
             for segment in segments:
                 length = segment["end"] - segment["start"]
-                if length >= min_interval and length <= max_interval * 1.5:  # 允许50%的超出
+                # 严格确保所有片段都大于等于最小区间
+                if length >= min_interval:
                     valid_segments.append(segment)
+                else:
+                    print(f"警告: 片段长度({length:.2f}s)小于最小区间({min_interval}s)，已移除")
                     
             # 如果没有有效片段，返回原始片段
             if not valid_segments and valid_whisper_segments:
-                print(f"警告: 验证后没有有效片段，返回原始片段")
-                return valid_whisper_segments
+                print(f"警告: 验证后没有有效片段，返回整个音频作为单个片段")
+                return [{
+                    "start": valid_whisper_segments[0]["start"],
+                    "end": valid_whisper_segments[-1]["end"],
+                    "text": " ".join([s["text"] for s in valid_whisper_segments])
+                }]
                 
             print(f"生成片段总数: {len(valid_segments)}，总持续时间：{sum(seg['end']-seg['start'] for seg in valid_segments):.2f}s")
             
